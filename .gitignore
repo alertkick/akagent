@@ -1,0 +1,8 @@
+*.old
+*.log
+*config.json
+apapi
+devtools
+*.http
+machine-id
+build

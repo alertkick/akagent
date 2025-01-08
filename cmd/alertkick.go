@@ -1,0 +1,220 @@
+package main
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+
+	"akagent/agent"
+	_ "akagent/checks/all"
+	"akagent/common"
+	"akagent/config"
+	"akagent/logger"
+
+	"golang.org/x/mod/semver"
+)
+
+var fConfigDir = flag.String("configdir", "/etc/alertkick", "path to config directory")
+var fConfigFile = flag.String("config", "/etc/alertkick/alertkick-agent.conf", "path to config file")
+var fDebug = flag.Bool("debug", false, "Starts the agent and displays the metrics sent in the terminal")
+var fVersion = flag.Bool("version", false, "display the version")
+var fLogFile = flag.String("logfile", "/var/log/alertkick/akagent.log", "path to log file")
+var fSetup = flag.Bool("setup", false, "setup the agent")
+
+// Version - holds the version number
+var Version string
+
+const minSupportedKernelVersion = "4.16"
+
+func main() {
+
+	flag.Parse()
+
+	config.ConfigDir = *fConfigDir
+	config.ConfigFile = *fConfigFile
+
+	if *fVersion {
+		v := fmt.Sprintf("AlertKick Monitoring Agent - Version %s", Version)
+		fmt.Println(v)
+		return
+	}
+
+	fmt.Printf("Log file location: %s \n", *fLogFile)
+	if *fDebug {
+		logger.SetupLogLevel(true)
+	} else {
+		logger.SetupLogLevel(false)
+	}
+
+	log := logger.Get()
+	log.Info().Msgf("Reading configfile: %s", *fConfigFile)
+	config.LoadConfig(*fConfigFile, log)
+	config := config.GetConfig(log)
+
+	if config.Debug || *fDebug {
+		logger.SetupLogLevel(true)
+		log = logger.Get()
+	} else {
+		logger.SetupLogLevel(false)
+		log = logger.Get()
+	}
+
+	hostname, kv, err := common.Uname()
+	if err != nil {
+		log.Panic().Msgf("failed to get uname: %s", err)
+	}
+	log.Info().Msgf("hostname: %s", hostname)
+	log.Info().Msgf("kernel version: %s", kv)
+
+	ver := common.KernelMajorMinor(kv)
+	if ver == "" {
+		log.Panic().Msgf("invalid kernel version: %v", kv)
+	}
+	if semver.Compare("v"+ver, "v"+minSupportedKernelVersion) == -1 {
+		log.Panic().Msgf("the minimum Linux kernel version required is %s or later", minSupportedKernelVersion)
+	}
+
+	if *fSetup {
+		Setup()
+		return
+	}
+
+	// Create a new agent
+	agent, err := agent.NewAgentClient(config, kv, log)
+	if err != nil {
+		log.Error().Err(err).Msg("Error creating agent")
+		panic(err)
+	}
+
+	if len(config.AgentID) == 0 {
+		err := errors.New("missing AgentID. Please define `agent_id` in alertkick-agent.conf")
+		log.Fatal().Err(err).Msg("Error creating agent")
+	}
+
+	shutdown := make(chan struct{})
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt)
+	go func() {
+		<-signals
+		close(shutdown)
+	}()
+
+	log.Info().Msgf("Agent ID: %s", config.AgentID)
+	log.Info().Msg("Starting AlertKick Agent (Version: " + Version + ")")
+
+	// Run the agent until shutdown (blocking)
+	err = agent.Run(shutdown)
+	if err != nil {
+		log.Error().Err(err).Msg("Error running agent")
+		panic(err)
+	}
+}
+
+func GetUserInput(promptString string) string {
+	input := ""
+	fmt.Println(promptString)
+	fmt.Scanln(&input)
+	return strings.TrimSpace(input)
+}
+
+func GetUserInputWithDefault(promptString string, defaultValue string) string {
+	input := ""
+	fmt.Println(promptString)
+	fmt.Scanln(&input)
+	if input == "" {
+		return defaultValue
+	}
+	return strings.TrimSpace(input)
+}
+
+// Setup - sets up the agent
+func Setup() {
+	log := logger.Get()
+	log.Info().Msg("Setting up agent")
+
+	// Check if environment variables are defined
+	agentEnv := os.Getenv("AK_AGENT_ENV")
+	if agentEnv == "" {
+		agentEnv = GetUserInputWithDefault("AK_AGENT_ENV variables not set. Please provide agent environment (staging or production)", "staging")
+	}
+
+	// Check if environment variables are defined
+	agentToken := os.Getenv("AK_AGENT_TOKEN")
+	if agentToken == "" {
+		agentToken = GetUserInput("AK_AGENT_TOKEN variables not set. Please provide agent token")
+	}
+
+	agentID := os.Getenv("AK_AGENT_ID")
+	if agentID == "" {
+		agentID = GetUserInput("AK_AGENT_ID variables not set. Please provide agent ID")
+	}
+
+	hostLabel := os.Getenv("AK_AGENT_HOST_LABEL")
+	if hostLabel == "" {
+		defaultHostLabel := fmt.Sprintf("%s-%s", agentID, agentEnv)
+		hostLabel = GetUserInputWithDefault("AK_AGENT_HOST_LABEL variables not set. Please provide host label", defaultHostLabel)
+	}
+
+	subdomain := os.Getenv("AK_AGENT_SUBDOMAIN")
+	if subdomain == "" {
+		subdomain = GetUserInput("AK_AGENT_SUBDOMAIN variables not set. Please provide subdomain")
+	}
+
+	// Use the environment variables
+	log.Info().Msgf("Agent Token: %s", agentToken)
+	log.Info().Msgf("Agent ID: %s", agentID)
+	log.Info().Msgf("Host Label: %s", hostLabel)
+	log.Info().Msgf("Subdomain: %s", subdomain)
+
+	endpoint := ""
+	if agentEnv == "staging" {
+		endpoint = "monit-stg.alertkick.com:8585"
+	} else {
+		endpoint = "monit.alertkick.com:8585"
+	}
+
+	// Verify the agent token by connecting to the endpoint
+	req, err := http.NewRequest("GET", "http://"+endpoint, nil)
+	if err != nil {
+		log.Panic().Err(err).Msg("Failed to create request")
+	}
+	req.Header.Set("Authorization", "Bearer "+agentToken)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Panic().Err(err).Msg("Failed to connect to endpoint")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Panic().Msgf("Failed to verify agent token, status code: %d", resp.StatusCode)
+	}
+
+	// On successful return, create /etc/alertkick-agent.conf file
+	confContent := fmt.Sprintf(`{
+		"AgentToken": "%s",
+		"AgentID": "%s",
+		"HostLabel": "%s",
+		"Subdomain": "%s"
+	}`, agentToken, agentID, hostLabel, subdomain)
+
+	// create confir directory if it doesn't exist
+	confDir := "/etc/alertkick"
+	if _, err := os.Stat(confDir); os.IsNotExist(err) {
+		os.MkdirAll(confDir, 0755)
+	}
+
+	confFilePath := filepath.Join(confDir, "alertkick-agent.conf")
+	err = os.WriteFile(confFilePath, []byte(confContent), 0644)
+	if err != nil {
+		log.Panic().Err(err).Msgf("Failed to update %s", confFilePath)
+	}
+	log.Info().Msgf("Successfully updated %s", confFilePath)
+	log.Info().Msg("Please restart the agent to continue")
+}
