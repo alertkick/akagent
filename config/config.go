@@ -23,7 +23,7 @@ type Config struct {
 	AgentToken        string
 	FalcoEnabled      bool
 	Endpoint          string
-	TLSCertFilePath   string
+	TLSCAFilePath     string
 	TLSInsecure       bool
 	BpfDir            string
 	MapDir            string
@@ -79,15 +79,16 @@ var (
 		EnablePolicyFilterDebug: true,
 		EnableK8s:               false,
 		DisableKprobeMulti:      false,
-
-		RBSize:                66560,
-		RBSizeTotal:           66560,
-		RBQueueSize:           65535,
-		KMods:                 []string{},
-		ProcessCacheSize:      65536,
-		DataCacheSize:         1024,
-		EventQueueSize:        10000,
-		ExposeKernelAddresses: false,
+		TLSInsecure:             false,
+		TLSCAFilePath:           "",
+		RBSize:                  66560,
+		RBSizeTotal:             66560,
+		RBQueueSize:             65535,
+		KMods:                   []string{},
+		ProcessCacheSize:        65536,
+		DataCacheSize:           1024,
+		EventQueueSize:          10000,
+		ExposeKernelAddresses:   false,
 	}
 	configLock = new(sync.RWMutex)
 )

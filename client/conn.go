@@ -1,14 +1,17 @@
 package client
 
 import (
+	"akagent/certs"
 	"akagent/config"
 	"bufio"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -33,6 +36,7 @@ type Connection struct {
 	subdomain          string
 	tenant             string
 	TLSInsecure        bool
+	TLSCAFilePath      string
 	ServerReqChan      chan Request
 	agentToken         string
 	log                zerolog.Logger
@@ -79,6 +83,7 @@ func NewConnection(conf *config.Config, log zerolog.Logger) *Connection {
 		tenant:            conf.Subdomain,
 		agentToken:        conf.AgentToken,
 		TLSInsecure:       conf.TLSInsecure,
+		TLSCAFilePath:     conf.TLSCAFilePath,
 		state:             StateDisconnected,
 		heartbeatInterval: 10,
 		nextRequestID:     100,
@@ -94,16 +99,55 @@ func NewConnection(conf *config.Config, log zerolog.Logger) *Connection {
 }
 
 func (c *Connection) StartConnection() {
-	config := &tls.Config{
-		InsecureSkipVerify: c.TLSInsecure, // Change this to 'false' for production use
+	// Load CA certificate
+	c.log.Info().Msg("Starting TLS connection setup")
+	caCertPool := x509.NewCertPool()
+
+	// first load the default CA certificate
+	if !caCertPool.AppendCertsFromPEM(certs.CACert) {
+		c.log.Error().Msg("Failed to append the default CA certificate")
+		return
+	}
+	c.log.Info().Msg("Successfully loaded the default CA certificate")
+
+	// then load all the additional CA certificates from the file if it exists
+	if c.TLSCAFilePath != "" {
+		caCert, err := os.ReadFile(c.TLSCAFilePath)
+		if err != nil {
+			c.log.Error().Err(err).Msg("Failed to read additional CA certificate file")
+			return
+		}
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			c.log.Error().Msg("Failed to append additional CA certificate")
+			return
+		}
+		c.log.Info().Msg("Successfully loaded additional CA certificate from file")
+	} else {
+		c.log.Info().Msg("No additional CA certificate file provided, using only the default CA certificate")
 	}
 
-	// TODO: verify the server certificate using the CA certificate
+	config := &tls.Config{
+		InsecureSkipVerify: c.TLSInsecure, // Change this to 'false' for production use
+		RootCAs:            caCertPool,
+		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			c.log.Info().Int("numCerts", len(rawCerts)).Msg("Received server certificates")
+			for i, rawCert := range rawCerts {
+				cert, err := x509.ParseCertificate(rawCert)
+				if err != nil {
+					c.log.Error().Err(err).Int("certIndex", i).Msg("Failed to parse server certificate")
+					return err
+				}
+				c.log.Info().Str("subject", cert.Subject.String()).Str("issuer", cert.Issuer.String()).Msg("Server certificate details")
+			}
+			return nil
+		},
+	}
 
 	// Continuously try to connect to the RPC server until successful or we are in shutdown state
 	delay := time.Second
 	for c.State() == StateDisconnected && c.State() != StateShuttingDown {
 		c.log.Info().Msg("Connection.StartConnection - Connecting to RPC server")
+		c.log.Info().Str("endpoint", c.endpointAddr).Bool("insecure", c.TLSInsecure).Msg("Attempting to connect")
 		d := tls.Dialer{
 			Config: config,
 		}
@@ -111,9 +155,35 @@ func (c *Connection) StartConnection() {
 		defer cancel()
 		conn, err := d.DialContext(ctx, "tcp", c.endpointAddr)
 		if err != nil {
-			c.log.Err(err).Msg("Connection.StartConnection - Error connecting to RPC server")
+			if hostnameErr, ok := err.(*x509.HostnameError); ok {
+				c.log.Error().
+					Err(err).
+					Str("expected", hostnameErr.Host).
+					Str("got", hostnameErr.Certificate.Subject.CommonName).
+					Msg("Connection.StartConnection - TLS hostname verification failed")
+			} else if authorityErr, ok := err.(*x509.UnknownAuthorityError); ok {
+				c.log.Error().
+					Err(err).
+					Str("authority", authorityErr.Cert.Issuer.String()).
+					Str("endpoint", c.endpointAddr).
+					Msg("Connection.StartConnection - Server certificate not signed by our CA")
+			} else if certErr, ok := err.(*x509.CertificateInvalidError); ok {
+				c.log.Error().
+					Err(err).
+					Int("reason", int(certErr.Reason)).
+					Str("endpoint", c.endpointAddr).
+					Msg("Connection.StartConnection - Server certificate is invalid")
+			} else {
+				c.log.Error().
+					Err(err).
+					Str("endpoint", c.endpointAddr).
+					Msg("Connection.StartConnection - Error connecting to RPC server")
+			}
 			c.state = StateDisconnected
-			c.log.Info().Msgf("Connection.StartConnection - Waiting %s before retrying", delay)
+			c.log.Info().
+				Err(err).
+				Str("endpoint", c.endpointAddr).
+				Msg("Connection.StartConnection - Waiting before retrying")
 			time.Sleep(delay)
 			if delay < 10*time.Minute {
 				delay = delay * 2

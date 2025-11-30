@@ -213,12 +213,18 @@ func (a *agent) HandleServerRequest(req client.Request) error {
 	case "disable_falco":
 		a.log.Debug().Msg("agent.HandleServerRequest - received disable_falco request")
 		a.handleDisableFalcoRequest(req)
-	case "update_check_profiles":
-		a.log.Debug().Msg("agent.HandleServerRequest - received update_check_profiles request")
-		a.handleUpdateCheckProfilesRequest(req)
+	case "agent.refresh_check_profiles":
+		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_check_profiles or refresh_checks request")
+		a.handleRefreshCheckProfilesRequest(req)
+	case "agent.refresh_checks":
+		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_checks request")
+		a.handleRefreshChecksRequest(req)
 	case "host_info_types.get":
 		a.log.Debug().Msg("agent.HandleServerRequest - received host_info_types.get request")
 		// handleMethod2(req)
+	case "refresh_falco_rules":
+		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_falco_rules request")
+		a.handleRefreshFalcoRulesRequest(req)
 	default:
 		// we need to send a response to the server to indicate that the request is not supported
 		a.log.Warn().Msgf("agent.HandleServerRequest - unknown method: %s", req.Method)
@@ -392,6 +398,34 @@ func (a *agent) handleDisableFalcoRequest(req client.Request) {
 	a.log.Info().Msg("agent.handleDisableFalcoRequest - END")
 }
 
+func (a *agent) handleRefreshFalcoRulesRequest(req client.Request) {
+	a.log.Info().Msg("agent.handleRefreshFalcoRulesRequest - START")
+	response := client.GeneralCommandResponse{
+		Message: "Falco rules refreshed",
+		Status:  "success",
+		Error:   "",
+	}
+
+	msg := client.Response{
+		Version:   "1",
+		ID:        req.ID,
+		Target:    "falco.refresh_rules",
+		Source:    a.AgentID,
+		Tenant:    a.Subdomain,
+		Subdomain: a.Subdomain,
+		Result:    json.RawMessage(response.String()),
+	}
+
+	err := a.conn.SendJSONMessageNoResponse(msg)
+	if err != nil {
+		a.log.Err(err).Msg("agent.handleRefreshFalcoRulesRequest - error during `refresh_falco_rules` submit")
+		return
+	}
+
+	a.GetFalcoRuleFiles()
+	a.log.Info().Msg("agent.handleRefreshFalcoRulesRequest - END")
+}
+
 func (a *agent) UpdateFalcoAgentServiceStatus(status string) {
 	params := api.CheckMetricParams{
 		CheckID: "falco.service_status",
@@ -471,8 +505,8 @@ func (a *agent) handleFalcoConfigRequest(req client.Request) {
 	}
 }
 
-func (a *agent) handleUpdateCheckProfilesRequest(req client.Request) {
-	a.log.Debug().Msg("agent.handleUpdateCheckProfilesRequest - received update_check_profiles request")
+func (a *agent) handleRefreshCheckProfilesRequest(req client.Request) {
+	a.log.Debug().Msg("agent.handleRefreshCheckProfilesRequest - received refresh_check_profiles request")
 	a.CheckScheduleGet()
 
 	response := client.GeneralCommandResponse{
@@ -484,7 +518,7 @@ func (a *agent) handleUpdateCheckProfilesRequest(req client.Request) {
 	msg := client.Response{
 		Version:   "1",
 		ID:        req.ID,
-		Target:    "update_check_profiles",
+		Target:    "agent.refresh_check_profiles",
 		Source:    a.AgentID,
 		Tenant:    a.Subdomain,
 		Subdomain: a.Subdomain,
@@ -493,7 +527,34 @@ func (a *agent) handleUpdateCheckProfilesRequest(req client.Request) {
 
 	err := a.conn.SendJSONMessageNoResponse(msg)
 	if err != nil {
-		a.log.Err(err).Msg("agent.handleUpdateCheckProfilesRequest - error during `update_check_profiles` submit")
+		a.log.Err(err).Msg("agent.handleRefreshCheckProfilesRequest - error during `refresh_check_profiles` submit")
+		return
+	}
+}
+
+func (a *agent) handleRefreshChecksRequest(req client.Request) {
+	a.log.Debug().Msg("agent.handleRefreshChecksRequest - received refresh_checks request")
+	a.CheckScheduleGet()
+
+	response := client.GeneralCommandResponse{
+		Message: "Check profiles updated",
+		Status:  "success",
+		Error:   "",
+	}
+
+	msg := client.Response{
+		Version:   "1",
+		ID:        req.ID,
+		Target:    "agent.refresh_checks",
+		Source:    a.AgentID,
+		Tenant:    a.Subdomain,
+		Subdomain: a.Subdomain,
+		Result:    json.RawMessage(response.String()),
+	}
+
+	err := a.conn.SendJSONMessageNoResponse(msg)
+	if err != nil {
+		a.log.Err(err).Msg("agent.handleRefreshChecksRequest - error during `refresh_checks` submit")
 		return
 	}
 }

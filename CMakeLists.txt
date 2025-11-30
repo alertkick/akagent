@@ -27,6 +27,13 @@ endif()
 
 include(ExternalProject)
 
+execute_process(
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/version.sh
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  OUTPUT_VARIABLE VERSION_SHORT
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
 message("Packaging ${APP_NAME} ${VERSION_SHORT}")
 ###############################################################################
 ## Enumerate System

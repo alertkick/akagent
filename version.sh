@@ -1,7 +1,8 @@
 #! /bin/bash
 
 # this file takes one argument, bump as -b
-#  if -b is not provided, it will bump the version otherwise we just return the latest tag.
+#  if -b is not provided, it will bump the version 
+#  otherwise it just returns the latest tag without the v prefix.
 
 if [ "$1" == "-b" ]; then
     bump=true
@@ -11,6 +12,9 @@ fi
 
 if [ "$bump" == false ]; then
     version=$(git describe --tags `git rev-list --tags --max-count=1`)
+
+    # remove the v prefix
+    version=$(echo "$version" | sed 's/^v//')
     echo "$version"
 else
     version=$(git describe --tags `git rev-list --tags --max-count=1`)
