@@ -85,7 +85,7 @@ func main() {
 	}
 
 	// Create a new agent
-	agent, err := agent.NewAgentClient(config, kv, log)
+	agent, err := agent.NewAgentClient(config, kv, log, Version)
 	if err != nil {
 		log.Error().Err(err).Msg("Error creating agent")
 		panic(err)

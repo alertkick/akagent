@@ -62,9 +62,9 @@ type agent struct {
 	checkResultMaxQueueSize int
 }
 
-func NewAgentClient(conf *config.Config, kernalVersion string, log zerolog.Logger) (*agent, error) {
+func NewAgentClient(conf *config.Config, kernalVersion string, log zerolog.Logger, version string) (*agent, error) {
 
-	RPCConn := client.NewConnection(conf, log)
+	RPCConn := client.NewConnection(conf, log, version)
 	agent := agent{
 		log:                     log,
 		conn:                    RPCConn,

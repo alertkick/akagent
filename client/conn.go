@@ -52,6 +52,7 @@ type Connection struct {
 	timeout            int                      // Timeout for requests in seconds. Default is 30 seconds
 	sentHeartbeatCount int                      // Count of heartbeats sent on this connection.
 	heartbeatInterval  int                      // Heartbeat interval in seconds.
+	version            string                   // Agent version
 }
 
 func (c *Connection) Close() error {
@@ -74,7 +75,7 @@ func (c *Connection) IsConnected() bool {
 	return c.state == StateConnected
 }
 
-func NewConnection(conf *config.Config, log zerolog.Logger) *Connection {
+func NewConnection(conf *config.Config, log zerolog.Logger, version string) *Connection {
 	connection := &Connection{
 		endpointAddr:      conf.Endpoint,
 		agentID:           conf.AgentID,
@@ -93,6 +94,7 @@ func NewConnection(conf *config.Config, log zerolog.Logger) *Connection {
 		ServerReqChan:     make(chan Request),
 		timeout:           20,
 		log:               log,
+		version:           version,
 	}
 	go connection.StartConnection()
 	return connection

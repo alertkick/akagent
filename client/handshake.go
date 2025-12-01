@@ -8,12 +8,20 @@ import (
 
 // NewHandshakeHelloMsg - generates a new HandlshakeHello msg
 func (c *Connection) NewHandshakeHelloMsg() *Request {
+	// Format version - ensure it starts with 'v' if not empty
+	version := c.version
+	if version == "" {
+		version = "v1.0.0" // fallback to default if version is not set
+	} else if len(version) > 0 && version[0] != 'v' {
+		version = "v" + version
+	}
+
 	params := map[string]string{
 		"agent_id":        c.agentID,
 		"agent_name":      c.agentName,
 		"agent_token":     c.agentToken,
-		"process_version": "v1.0.0",
-		"bundle_version":  "v1.0.0",
+		"process_version": version,
+		"bundle_version":  version,
 	}
 
 	paramsJSON, err := json.Marshal(params)
