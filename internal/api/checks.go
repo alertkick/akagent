@@ -45,13 +45,14 @@ type MetricGroup struct {
 }
 
 type CheckMetricParams struct {
-	Timestamp      int64         `json:"timestamp,omitempty"`
-	CheckID        string        `json:"check_id"`
-	CheckType      string        `json:"check_type"`
-	State          string        `json:"state"`
-	Status         string        `json:"status"`
-	MinCheckPeriod int64         `json:"min_check_period"`
-	MetricGroups   []MetricGroup `json:"metric_groups,omitempty"`
+	Timestamp      int64           `json:"timestamp,omitempty"`
+	CheckID        string          `json:"check_id"`
+	CheckType      string          `json:"check_type"`
+	State          string          `json:"state"`
+	Status         string          `json:"status"`
+	MinCheckPeriod int64           `json:"min_check_period"`
+	MetricGroups   []MetricGroup   `json:"metric_groups,omitempty"`
+	InventoryData  json.RawMessage `json:"inventory_data,omitempty"` // Raw inventory data for host.monitor_* checks
 }
 
 // ChecksSchedule - struct for the checks message

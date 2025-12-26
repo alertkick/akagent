@@ -5,4 +5,6 @@ import (
 	_ "akagent/checks/http"
 	_ "akagent/checks/load_avg"
 	_ "akagent/checks/memory"
+	_ "akagent/checks/ports"
+	_ "akagent/checks/services"
 )

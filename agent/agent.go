@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -225,6 +226,27 @@ func (a *agent) HandleServerRequest(req client.Request) error {
 	case "refresh_falco_rules":
 		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_falco_rules request")
 		a.handleRefreshFalcoRulesRequest(req)
+	case "falco_service.start":
+		a.log.Debug().Msg("agent.HandleServerRequest - received falco_service.start request")
+		a.handleFalcoServiceStartRequest(req)
+	case "falco_service.stop":
+		a.log.Debug().Msg("agent.HandleServerRequest - received falco_service.stop request")
+		a.handleFalcoServiceStopRequest(req)
+	case "falco_service.restart":
+		a.log.Debug().Msg("agent.HandleServerRequest - received falco_service.restart request")
+		a.handleFalcoServiceRestartRequest(req)
+	case "falco_service.status":
+		a.log.Debug().Msg("agent.HandleServerRequest - received falco_service.status request")
+		a.handleFalcoServiceStatusRequest(req)
+	case "falco_service.logs":
+		a.log.Debug().Msg("agent.HandleServerRequest - received falco_service.logs request")
+		a.handleFalcoServiceLogsRequest(req)
+	case "falco_config.get":
+		a.log.Debug().Msg("agent.HandleServerRequest - received falco_config.get request")
+		a.handleFalcoConfigGetRequest(req)
+	case "falco_config.test":
+		a.log.Debug().Msg("agent.HandleServerRequest - received falco_config.test request")
+		a.handleFalcoConfigTestRequest(req)
 	default:
 		// we need to send a response to the server to indicate that the request is not supported
 		a.log.Warn().Msgf("agent.HandleServerRequest - unknown method: %s", req.Method)
@@ -426,6 +448,386 @@ func (a *agent) handleRefreshFalcoRulesRequest(req client.Request) {
 	a.log.Info().Msg("agent.handleRefreshFalcoRulesRequest - END")
 }
 
+const falcoServiceName = "falco-modern-bpf.service"
+
+func (a *agent) handleFalcoServiceStartRequest(req client.Request) {
+	a.log.Info().Msg("agent.handleFalcoServiceStartRequest - START")
+
+	response := client.FalcoServiceResponse{
+		Action:  "start",
+		Status:  "success",
+		Message: "Falco service started successfully",
+	}
+
+	returnCode := systemd.StartService(falcoServiceName)
+	if returnCode != 0 {
+		response.Status = "failed"
+		response.Message = fmt.Sprintf("Failed to start Falco service, return code: %d", returnCode)
+		response.Error = response.Message
+	}
+
+	// Get current service status
+	activeState, subState, _ := systemd.GetServiceStatus(falcoServiceName)
+	if activeState == "active" && subState == "running" {
+		response.ServiceStatus = "running"
+	} else {
+		response.ServiceStatus = "stopped"
+	}
+
+	msg := client.Response{
+		Version:   "1",
+		ID:        req.ID,
+		Target:    "falco_service.start",
+		Source:    a.AgentID,
+		Tenant:    a.Subdomain,
+		Subdomain: a.Subdomain,
+		Result:    json.RawMessage(response.String()),
+	}
+
+	err := a.conn.SendJSONMessageNoResponse(msg)
+	if err != nil {
+		a.log.Err(err).Msg("agent.handleFalcoServiceStartRequest - error sending response")
+	}
+
+	// Update service status
+	a.UpdateFalcoAgentServiceStatus(response.ServiceStatus)
+	a.log.Info().Msg("agent.handleFalcoServiceStartRequest - END")
+}
+
+func (a *agent) handleFalcoServiceStopRequest(req client.Request) {
+	a.log.Info().Msg("agent.handleFalcoServiceStopRequest - START")
+
+	response := client.FalcoServiceResponse{
+		Action:  "stop",
+		Status:  "success",
+		Message: "Falco service stopped successfully",
+	}
+
+	returnCode := systemd.StopService(falcoServiceName)
+	if returnCode != 0 {
+		response.Status = "failed"
+		response.Message = fmt.Sprintf("Failed to stop Falco service, return code: %d", returnCode)
+		response.Error = response.Message
+	}
+
+	// Get current service status
+	activeState, subState, _ := systemd.GetServiceStatus(falcoServiceName)
+	if activeState == "active" && subState == "running" {
+		response.ServiceStatus = "running"
+	} else {
+		response.ServiceStatus = "stopped"
+	}
+
+	msg := client.Response{
+		Version:   "1",
+		ID:        req.ID,
+		Target:    "falco_service.stop",
+		Source:    a.AgentID,
+		Tenant:    a.Subdomain,
+		Subdomain: a.Subdomain,
+		Result:    json.RawMessage(response.String()),
+	}
+
+	err := a.conn.SendJSONMessageNoResponse(msg)
+	if err != nil {
+		a.log.Err(err).Msg("agent.handleFalcoServiceStopRequest - error sending response")
+	}
+
+	// Update service status
+	a.UpdateFalcoAgentServiceStatus(response.ServiceStatus)
+	a.log.Info().Msg("agent.handleFalcoServiceStopRequest - END")
+}
+
+func (a *agent) handleFalcoServiceRestartRequest(req client.Request) {
+	a.log.Info().Msg("agent.handleFalcoServiceRestartRequest - START")
+
+	response := client.FalcoServiceResponse{
+		Action:  "restart",
+		Status:  "success",
+		Message: "Falco service restarted successfully",
+	}
+
+	returnCode := systemd.RestartService(falcoServiceName)
+	if returnCode != 0 {
+		response.Status = "failed"
+		response.Message = fmt.Sprintf("Failed to restart Falco service, return code: %d", returnCode)
+		response.Error = response.Message
+	}
+
+	// Get current service status
+	activeState, subState, _ := systemd.GetServiceStatus(falcoServiceName)
+	if activeState == "active" && subState == "running" {
+		response.ServiceStatus = "running"
+	} else {
+		response.ServiceStatus = "stopped"
+	}
+
+	msg := client.Response{
+		Version:   "1",
+		ID:        req.ID,
+		Target:    "falco_service.restart",
+		Source:    a.AgentID,
+		Tenant:    a.Subdomain,
+		Subdomain: a.Subdomain,
+		Result:    json.RawMessage(response.String()),
+	}
+
+	err := a.conn.SendJSONMessageNoResponse(msg)
+	if err != nil {
+		a.log.Err(err).Msg("agent.handleFalcoServiceRestartRequest - error sending response")
+	}
+
+	// Update service status
+	a.UpdateFalcoAgentServiceStatus(response.ServiceStatus)
+	a.log.Info().Msg("agent.handleFalcoServiceRestartRequest - END")
+}
+
+func (a *agent) handleFalcoServiceStatusRequest(req client.Request) {
+	a.log.Info().Msg("agent.handleFalcoServiceStatusRequest - START")
+
+	response := client.FalcoServiceResponse{
+		Action:  "status",
+		Status:  "success",
+		Message: "Falco service status retrieved",
+	}
+
+	activeState, subState, returnCode := systemd.GetServiceStatus(falcoServiceName)
+	if returnCode != 0 {
+		response.Status = "failed"
+		response.ServiceStatus = "unknown"
+		response.Message = fmt.Sprintf("Failed to get Falco service status, return code: %d", returnCode)
+		response.Error = response.Message
+	} else {
+		if activeState == "active" && subState == "running" {
+			response.ServiceStatus = "running"
+		} else if activeState == "inactive" {
+			response.ServiceStatus = "stopped"
+		} else {
+			response.ServiceStatus = activeState + "/" + subState
+		}
+	}
+
+	msg := client.Response{
+		Version:   "1",
+		ID:        req.ID,
+		Target:    "falco_service.status",
+		Source:    a.AgentID,
+		Tenant:    a.Subdomain,
+		Subdomain: a.Subdomain,
+		Result:    json.RawMessage(response.String()),
+	}
+
+	err := a.conn.SendJSONMessageNoResponse(msg)
+	if err != nil {
+		a.log.Err(err).Msg("agent.handleFalcoServiceStatusRequest - error sending response")
+	}
+
+	// Update service status
+	a.UpdateFalcoAgentServiceStatus(response.ServiceStatus)
+	a.log.Info().Msg("agent.handleFalcoServiceStatusRequest - END")
+}
+
+func (a *agent) handleFalcoServiceLogsRequest(req client.Request) {
+	a.log.Info().Msg("agent.handleFalcoServiceLogsRequest - START")
+
+	// Parse the lines parameter from request
+	lines := 100 // default
+	if req.Params != nil {
+		var params struct {
+			Lines int `json:"lines"`
+		}
+		if err := json.Unmarshal(req.Params, &params); err == nil && params.Lines > 0 {
+			lines = params.Lines
+		}
+	}
+
+	response := client.FalcoLogsResponse{
+		Lines:  lines,
+		Status: "success",
+	}
+
+	logs, err := systemd.GetServiceLogs(falcoServiceName, lines)
+	if err != nil {
+		response.Status = "failed"
+		response.Error = err.Error()
+		response.Message = "Failed to retrieve Falco service logs"
+	} else {
+		response.Logs = logs
+		response.Message = "Falco service logs retrieved successfully"
+	}
+
+	msg := client.Response{
+		Version:   "1",
+		ID:        req.ID,
+		Target:    "falco_service.logs",
+		Source:    a.AgentID,
+		Tenant:    a.Subdomain,
+		Subdomain: a.Subdomain,
+		Result:    json.RawMessage(response.String()),
+	}
+
+	err = a.conn.SendJSONMessageNoResponse(msg)
+	if err != nil {
+		a.log.Err(err).Msg("agent.handleFalcoServiceLogsRequest - error sending response")
+	}
+
+	a.log.Info().Msg("agent.handleFalcoServiceLogsRequest - END")
+}
+
+const falcoConfigDir = "/etc/falco"
+
+func (a *agent) handleFalcoConfigGetRequest(req client.Request) {
+	a.log.Info().Msg("agent.handleFalcoConfigGetRequest - START")
+
+	response := client.FalcoConfigResponse{
+		Status:        "success",
+		ConfigFiles:   []client.FalcoConfigFile{},
+		FolderListing: []client.FalcoConfigFile{},
+	}
+
+	// Read main config file
+	mainConfigPath := filepath.Join(falcoConfigDir, "falco.yaml")
+	if content, err := os.ReadFile(mainConfigPath); err == nil {
+		response.ConfigFiles = append(response.ConfigFiles, client.FalcoConfigFile{
+			Path:    mainConfigPath,
+			Name:    "falco.yaml",
+			Content: string(content),
+			Size:    int64(len(content)),
+			IsDir:   false,
+		})
+	}
+
+	// Read rules files
+	rulesFiles := []string{"falco_rules.yaml", "falco_rules.local.yaml"}
+	for _, fileName := range rulesFiles {
+		filePath := filepath.Join(falcoConfigDir, fileName)
+		if content, err := os.ReadFile(filePath); err == nil {
+			response.ConfigFiles = append(response.ConfigFiles, client.FalcoConfigFile{
+				Path:    filePath,
+				Name:    fileName,
+				Content: string(content),
+				Size:    int64(len(content)),
+				IsDir:   false,
+			})
+		}
+	}
+
+	// Get folder listing
+	entries, err := os.ReadDir(falcoConfigDir)
+	if err != nil {
+		response.Status = "failed"
+		response.Error = err.Error()
+		response.Message = "Failed to read Falco config directory"
+	} else {
+		for _, entry := range entries {
+			info, err := entry.Info()
+			size := int64(0)
+			if err == nil {
+				size = info.Size()
+			}
+			response.FolderListing = append(response.FolderListing, client.FalcoConfigFile{
+				Path:  filepath.Join(falcoConfigDir, entry.Name()),
+				Name:  entry.Name(),
+				Size:  size,
+				IsDir: entry.IsDir(),
+			})
+		}
+		response.Message = "Falco config retrieved successfully"
+	}
+
+	msg := client.Response{
+		Version:   "1",
+		ID:        req.ID,
+		Target:    "falco_config.get",
+		Source:    a.AgentID,
+		Tenant:    a.Subdomain,
+		Subdomain: a.Subdomain,
+		Result:    json.RawMessage(response.String()),
+	}
+
+	err = a.conn.SendJSONMessageNoResponse(msg)
+	if err != nil {
+		a.log.Err(err).Msg("agent.handleFalcoConfigGetRequest - error sending response")
+	}
+
+	a.log.Info().Msg("agent.handleFalcoConfigGetRequest - END")
+}
+
+func (a *agent) handleFalcoConfigTestRequest(req client.Request) {
+	a.log.Info().Msg("agent.handleFalcoConfigTestRequest - START")
+
+	response := client.FalcoConfigTestResponse{
+		Status: "success",
+		Valid:  false,
+	}
+
+	// Find falco binary
+	falcoBinary := "/usr/bin/falco"
+	if _, err := os.Stat(falcoBinary); os.IsNotExist(err) {
+		// Try alternative path
+		falcoBinary = "/usr/local/bin/falco"
+		if _, err := os.Stat(falcoBinary); os.IsNotExist(err) {
+			response.Status = "failed"
+			response.Error = "Falco binary not found"
+			response.Message = "Could not find Falco binary at /usr/bin/falco or /usr/local/bin/falco"
+
+			msg := client.Response{
+				Version:   "1",
+				ID:        req.ID,
+				Target:    "falco_config.test",
+				Source:    a.AgentID,
+				Tenant:    a.Subdomain,
+				Subdomain: a.Subdomain,
+				Result:    json.RawMessage(response.String()),
+			}
+			a.conn.SendJSONMessageNoResponse(msg)
+			return
+		}
+	}
+
+	// Run falco with --dry-run to validate config and rules without actually starting
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Use --dry-run flag which validates config and rules without starting the engine
+	cmd := exec.CommandContext(ctx, falcoBinary, "-c", filepath.Join(falcoConfigDir, "falco.yaml"), "--dry-run")
+	output, err := cmd.CombinedOutput()
+
+	response.Output = string(output)
+
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			response.ExitCode = exitErr.ExitCode()
+		} else {
+			response.ExitCode = -1
+		}
+		response.Valid = false
+		response.Error = err.Error()
+		response.Message = "Falco configuration validation failed"
+	} else {
+		response.Valid = true
+		response.ExitCode = 0
+		response.Message = "Falco configuration is valid"
+	}
+
+	msg := client.Response{
+		Version:   "1",
+		ID:        req.ID,
+		Target:    "falco_config.test",
+		Source:    a.AgentID,
+		Tenant:    a.Subdomain,
+		Subdomain: a.Subdomain,
+		Result:    json.RawMessage(response.String()),
+	}
+
+	err = a.conn.SendJSONMessageNoResponse(msg)
+	if err != nil {
+		a.log.Err(err).Msg("agent.handleFalcoConfigTestRequest - error sending response")
+	}
+
+	a.log.Info().Msg("agent.handleFalcoConfigTestRequest - END")
+}
+
 func (a *agent) UpdateFalcoAgentServiceStatus(status string) {
 	params := api.CheckMetricParams{
 		CheckID: "falco.service_status",
@@ -461,7 +863,7 @@ func (a *agent) handleSystemInfoRequest(req client.Request) {
 	msg := client.Response{
 		Version:   "1",
 		ID:        req.ID,
-		Target:    "agent",
+		Target:    "system.info",
 		Source:    a.AgentID,
 		Tenant:    a.Subdomain,
 		Subdomain: a.Subdomain,

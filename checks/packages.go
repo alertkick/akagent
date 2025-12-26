@@ -6,9 +6,14 @@ import (
 )
 
 // GetInstalledPackages retrieves a list of installed packages with their versions
+// Only includes packages that are actually installed (status "install ok installed")
+// Excludes packages with status like "deinstall ok config-files" (rc status)
 func GetInstalledPackages() ([]PackageInfo, error) {
-	// Run the dpkg-query command to list all installed packages
-	cmd := exec.Command("dpkg-query", "-W", "-f=${Package} ${Version}\n")
+	// Run the dpkg-query command to list all packages with their status
+	// Format: package_name version status
+	// Status field contains something like "install ok installed" for actually installed packages
+	// or "deinstall ok config-files" for packages in 'rc' state (removed but config remains)
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Package} ${Version} ${Status}\n")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -23,11 +28,22 @@ func GetInstalledPackages() ([]PackageInfo, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.Split(line, " ")
-		if len(parts) == 2 {
+		// Format: "package_name version status_string"
+		// Status string is like "install ok installed" or "deinstall ok config-files"
+		parts := strings.SplitN(line, " ", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		name := parts[0]
+		version := parts[1]
+		status := parts[2]
+
+		// Only include packages that are actually installed
+		// The status field ends with "installed" for fully installed packages
+		if strings.HasSuffix(status, "installed") {
 			packages = append(packages, PackageInfo{
-				Name:    parts[0],
-				Version: parts[1],
+				Name:    name,
+				Version: version,
 			})
 		}
 	}

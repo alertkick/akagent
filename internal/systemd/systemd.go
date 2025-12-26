@@ -3,6 +3,8 @@ package systemd
 import (
 	"akagent/logger"
 	"context"
+	"os/exec"
+	"strconv"
 	"time"
 
 	"github.com/coreos/go-systemd/v22/dbus"
@@ -24,6 +26,9 @@ const (
 	exitCodeTimeoutWaitingForRestart = 18
 	exitCodeTimeoutWaitingForStop    = 19
 	exitCodeTimeoutWaitingForStart   = 20
+	exitCodeFailedToRestart          = 21
+	exitCodeFailedToStop             = 22
+	exitCodeFailedToStart            = 23
 )
 
 func CheckServiceStatus(serviceName string) int {
@@ -146,7 +151,7 @@ func RestartService(serviceName string) int {
 
 	if err != nil {
 		log.Error().Err(err).Msgf("failed to restart unit: %v", err)
-		panic(err)
+		return exitCodeFailedToRestart
 	}
 	log.Info().Msgf("restart job id: %d", jobID)
 
@@ -260,7 +265,7 @@ func StopService(serviceName string) int {
 
 	if err != nil {
 		log.Error().Err(err).Msgf("failed to stop unit: %v", err)
-		panic(err)
+		return exitCodeFailedToStop
 	}
 	log.Info().Msgf("stop job id: %d", jobID)
 
@@ -315,6 +320,54 @@ func StopService(serviceName string) int {
 			return exitCodeTimeoutWaitingForStop
 		}
 	}
+}
+
+// GetServiceStatus returns the current status of a systemd service
+func GetServiceStatus(serviceName string) (string, string, int) {
+	ctx := context.Background()
+	systemdConnection, err := dbus.NewSystemConnectionContext(ctx)
+	if err != nil {
+		log.Error().Err(err).Msgf("failed to connect to systemd: %v", err)
+		return "", "", exitCodeFailedToListUnits
+	}
+	defer systemdConnection.Close()
+
+	listOfUnits, err := systemdConnection.ListUnitsContext(ctx)
+	if err != nil {
+		log.Error().Err(err).Msgf("failed to list units: %v", err)
+		return "", "", exitCodeFailedToListUnits
+	}
+
+	for _, unit := range listOfUnits {
+		if unit.Name == serviceName {
+			log.Info().Msgf("unit %s is in state %s and substate %s", unit.Name, unit.ActiveState, unit.SubState)
+			return unit.ActiveState, unit.SubState, exitCodeSuccess
+		}
+	}
+
+	log.Error().Msgf("expected systemd unit %s not found", serviceName)
+	return "", "", exitCodeUnitNotFound
+}
+
+// GetServiceLogs returns the recent logs for a systemd service using journalctl
+func GetServiceLogs(serviceName string, lines int) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if lines <= 0 {
+		lines = 100
+	}
+	if lines > 1000 {
+		lines = 1000 // Cap at 1000 lines for safety
+	}
+
+	cmd := exec.CommandContext(ctx, "journalctl", "-u", serviceName, "-n", strconv.Itoa(lines), "--no-pager", "--output=short-iso")
+	output, err := cmd.Output()
+	if err != nil {
+		log.Error().Err(err).Msgf("failed to get logs for service %s: %v", serviceName, err)
+		return "", err
+	}
+	return string(output), nil
 }
 
 func StartService(serviceName string) int {
@@ -373,7 +426,7 @@ func StartService(serviceName string) int {
 
 	if err != nil {
 		log.Error().Err(err).Msgf("failed to start unit: %v", err)
-		panic(err)
+		return exitCodeFailedToStart
 	}
 	log.Info().Msgf("start job id: %d", jobID)
 

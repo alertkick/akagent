@@ -87,6 +87,72 @@ func (g GeneralCommandResponse) String() string {
 	return string(s)
 }
 
+// FalcoServiceResponse represents the response for Falco service operations
+type FalcoServiceResponse struct {
+	Action        string `json:"action"`         // start, stop, restart, status
+	Status        string `json:"status"`         // success, failed
+	ServiceStatus string `json:"service_status"` // running, stopped, unknown
+	Message       string `json:"message"`
+	Error         string `json:"error,omitempty"`
+}
+
+func (f FalcoServiceResponse) String() string {
+	s, _ := json.Marshal(f)
+	return string(s)
+}
+
+// FalcoLogsResponse represents the response for Falco logs request
+type FalcoLogsResponse struct {
+	Logs    string `json:"logs"`
+	Lines   int    `json:"lines"`
+	Status  string `json:"status"` // success, failed
+	Error   string `json:"error,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func (f FalcoLogsResponse) String() string {
+	s, _ := json.Marshal(f)
+	return string(s)
+}
+
+// FalcoConfigFile represents a single config file
+type FalcoConfigFile struct {
+	Path    string `json:"path"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+	Size    int64  `json:"size"`
+	IsDir   bool   `json:"is_dir"`
+}
+
+// FalcoConfigResponse represents the response for Falco config get request
+type FalcoConfigResponse struct {
+	Status        string            `json:"status"` // success, failed
+	ConfigFiles   []FalcoConfigFile `json:"config_files"`
+	FolderListing []FalcoConfigFile `json:"folder_listing"`
+	Error         string            `json:"error,omitempty"`
+	Message       string            `json:"message,omitempty"`
+}
+
+func (f FalcoConfigResponse) String() string {
+	s, _ := json.Marshal(f)
+	return string(s)
+}
+
+// FalcoConfigTestResponse represents the response for Falco config test request
+type FalcoConfigTestResponse struct {
+	Status   string `json:"status"` // success, failed
+	Valid    bool   `json:"valid"`
+	Output   string `json:"output"`
+	Error    string `json:"error,omitempty"`
+	Message  string `json:"message,omitempty"`
+	ExitCode int    `json:"exit_code"`
+}
+
+func (f FalcoConfigTestResponse) String() string {
+	s, _ := json.Marshal(f)
+	return string(s)
+}
+
 type CheckResultsPost struct {
 	ID        string                `json:"id" bson:"id"`
 	Version   string                `json:"v" bson:"v"`

@@ -39,9 +39,30 @@ type HostData struct {
 
 // SystemData - collect all system metrics
 type SystemData struct {
-	Uptime   uint64        `json:"uptime"`
-	Packages []PackageInfo `json:"packages"`
-	Distro   DistroStruct  `json:"distro"`
+	Uptime         uint64              `json:"uptime"`
+	Packages       []PackageInfo       `json:"packages"`
+	Distro         DistroStruct        `json:"distro"`
+	Services       []SystemServiceInfo `json:"services,omitempty"`
+	ListeningPorts []SystemPortInfo    `json:"listening_ports,omitempty"`
+}
+
+// SystemServiceInfo represents a service for system info collection
+// This is a simplified version used in the periodic system info, not the monitoring check
+type SystemServiceInfo struct {
+	Name        string `json:"name"`
+	Status      string `json:"status"`       // running, stopped, failed
+	ActiveState string `json:"active_state"` // active, inactive, failed
+	SubState    string `json:"sub_state"`    // running, dead, exited
+	LoadState   string `json:"load_state"`   // loaded, not-found, masked
+	MainPID     int    `json:"main_pid,omitempty"`
+}
+
+// SystemPortInfo represents a listening port for system info collection
+type SystemPortInfo struct {
+	Port     uint16 `json:"port"`
+	Protocol string `json:"protocol"` // tcp, tcp6, udp, udp6
+	Address  string `json:"address"`  // IP address binding
+	Inode    string `json:"inode,omitempty"`
 }
 
 // DistroStruct - returns information about the currently instaled distro

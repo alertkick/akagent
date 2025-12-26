@@ -144,21 +144,19 @@ func (fm *FalcoManager) LoadRules() {
 }
 
 func (fm *FalcoManager) UpdateRuleFiles(ruleFiles []FalcoRuleFileData) {
-	// First get the list of rules files and create a map of the existing files, so we can
-	// delete the ones that are not in the new list
+	// Get list of existing rule files so we can delete ones not in the new list
 	existingRulesFiles, err := ListFalcoRulesFiles()
 	if err != nil {
 		log.Err(err).Msg("Error loading existing rules files")
 	}
-	existingRulesFilesMap := make(map[string]bool)
-	for _, ruleFile := range existingRulesFiles {
-		existingRulesFilesMap[ruleFile] = true
-	}
-	log.Debug().Msgf("Existing rules files map: %v", existingRulesFilesMap)
+	log.Debug().Msgf("Existing rules files: %v", existingRulesFiles)
+
+	// Track which files should be kept (files sent from server)
+	newFilesMap := make(map[string]bool)
 
 	// decode the content of each rule file
-	decodedRuleFiles := make([]FalcoRuleFileData, len(ruleFiles))
-	for i, ruleFile := range ruleFiles {
+	decodedRuleFiles := []FalcoRuleFileData{}
+	for _, ruleFile := range ruleFiles {
 		log.Debug().Msgf("Decoding Falco rule file %s", ruleFile.Filename)
 		log.Debug().Msgf("MD5Sum: %s", ruleFile.MD5Sum)
 		// Validate base64 content
@@ -175,7 +173,6 @@ func (fm *FalcoManager) UpdateRuleFiles(ruleFiles []FalcoRuleFileData) {
 			log.Error().
 				Err(err).
 				Str("filename", ruleFile.Filename).
-				// Str("content_preview", cleanContent[:min(len(cleanContent), 20)]+"...").
 				Msg("Error decoding base64 content")
 			continue
 		}
@@ -190,31 +187,37 @@ func (fm *FalcoManager) UpdateRuleFiles(ruleFiles []FalcoRuleFileData) {
 			continue
 		}
 
-		decodedRuleFiles[i] = FalcoRuleFileData{
+		decodedRuleFiles = append(decodedRuleFiles, FalcoRuleFileData{
 			Filename: ruleFile.Filename,
 			MD5Sum:   ruleFile.MD5Sum,
 			Content:  string(decodedContent),
-		}
+		})
+		// Mark this file as one to keep
+		newFilesMap[ruleFile.Filename] = true
 	}
 
-	// write the updated rule files to the file system
+	log.Debug().Msgf("New files to keep: %v", newFilesMap)
+
+	// Write the updated rule files to the file system
 	for _, ruleFile := range decodedRuleFiles {
+		if ruleFile.Filename == "" {
+			continue
+		}
 		err := WriteFalcoRuleFile(ruleFile.Filename, ruleFile.Content)
 		if err != nil {
 			log.Err(err).Msgf("Error writing Falco rule file %s", ruleFile.Filename)
 			continue
 		}
 		log.Debug().Msgf("Updated Falco rule file %s", ruleFile.Filename)
-		existingRulesFilesMap[ruleFile.Filename] = true
 	}
 
-	// delete the files that are not in the new list
-	for _, ruleFile := range existingRulesFiles {
-		if !existingRulesFilesMap[ruleFile] {
-			log.Debug().Msgf("Deleting falco rule file %s", ruleFile)
-			err := DeleteFalcoRuleFile(ruleFile)
+	// Delete existing files that are NOT in the new list from server
+	for _, existingFile := range existingRulesFiles {
+		if !newFilesMap[existingFile] {
+			log.Info().Msgf("Deleting stale falco rule file: %s", existingFile)
+			err := DeleteFalcoRuleFile(existingFile)
 			if err != nil {
-				log.Err(err).Msgf("Error deleting falco rule file %s", ruleFile)
+				log.Err(err).Msgf("Error deleting falco rule file %s", existingFile)
 			}
 		}
 	}

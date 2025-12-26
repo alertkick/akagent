@@ -83,7 +83,10 @@ func CollectSystemData() SystemData {
 	var UptimeValue uint64
 	var installedPackages []PackageInfo
 	var distro DistroStruct
+	var services []SystemServiceInfo
+	var listeningPorts []SystemPortInfo
 	var wg sync.WaitGroup
+	
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -102,12 +105,29 @@ func CollectSystemData() SystemData {
 		distro = Distro()
 	}()
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		services, _ = GetSystemServices()
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		listeningPorts, _ = GetSystemListeningPorts()
+	}()
+
 	wg.Wait()
 
+	log.Debug().Msgf("CollectSystemData: packages=%d, services=%d, ports=%d",
+		len(installedPackages), len(services), len(listeningPorts))
+
 	SystemData := SystemData{
-		Uptime:   UptimeValue,
-		Packages: installedPackages,
-		Distro:   distro,
+		Uptime:         UptimeValue,
+		Packages:       installedPackages,
+		Distro:         distro,
+		Services:       services,
+		ListeningPorts: listeningPorts,
 	}
 	return SystemData
 }
