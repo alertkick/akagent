@@ -1,7 +1,8 @@
 package config
 
 import (
-	"akagent/internal/api"
+	"apagent/internal/api"
+	"apagent/logger"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -29,6 +30,13 @@ type Config struct {
 	MapDir            string
 	TracingPolicy     string
 	K8sKubeConfigPath string
+
+	// Logging configuration
+	// VerboseLevel: 0=no bytes, 1=truncated, 2=full JSON, 3=hex dump
+	VerboseLevel int `json:"verbose_level"`
+	// LogSections: comma-separated list of sections to enable (e.g., "protocol,heartbeat")
+	// Use "all" to enable all sections. Empty means only basic logs.
+	LogSections string `json:"log_sections"`
 
 	ProcFS          string
 	KernelVersion   string
@@ -67,7 +75,7 @@ var (
 		Debug:                   false,
 		ProcFS:                  "/proc",
 		KernelVersion:           "",
-		HubbleLib:               "/var/lib/alertkick-agent/",
+		HubbleLib:               "/var/lib/alertpriority-agent/",
 		BTF:                     "",
 		Verbosity:               3,
 		ForceSmallProgs:         false,
@@ -143,6 +151,15 @@ func loadConfig(fail bool, filepath string, log zerolog.Logger) {
 	configLock.Lock()
 	Option = temp
 	configLock.Unlock()
+
+	// Apply logging configuration from config file
+	// Config file settings override environment variables
+	if temp.VerboseLevel > 0 {
+		logger.SetVerboseLevel(temp.VerboseLevel)
+	}
+	if temp.LogSections != "" {
+		logger.SetLogSections(temp.LogSections)
+	}
 }
 
 // GetConfig gets the config.

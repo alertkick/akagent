@@ -1,9 +1,9 @@
 package load_avg
 
 import (
-	"akagent/checks"
-	"akagent/internal/api"
-	"akagent/logger"
+	"apagent/checks"
+	"apagent/internal/api"
+	"apagent/logger"
 	"context"
 	"strconv"
 	"sync"
@@ -29,7 +29,7 @@ func init() {
 	checks.AddConfig("host.load_avg")
 }
 
-// LoadAverageCheck - XXX
+// LoadAverageCheck monitors system load averages (1m, 5m, 15m)
 type LoadAverageCheck struct {
 	UUID        string
 	Name        string

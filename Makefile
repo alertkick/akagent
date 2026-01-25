@@ -1,14 +1,14 @@
 # Change these variables as necessary.
 MAIN_PACKAGE_PATH := ./cmd
-BINARY_NAME := alertkick-agent
-TARGET=build/alertkick-agent
+BINARY_NAME := alertpriority-agent
+TARGET=build/alertpriority-agent
 
 all: $(TARGET)
 
 $(TARGET):
 	cmake -H. -Bbuild
 	cmake --build build
-	build/alertkick-agent -v
+	build/alertpriority-agent -v
 
 # ==================================================================================== #
 # HELPERS
@@ -64,10 +64,14 @@ test/cover:
 	go test -v -race -buildvcs -coverprofile=/tmp/coverage.out ./...
 	go tool cover -html=/tmp/coverage.out
 
+## bpf/generate: generate eBPF Go bindings from BPF C code
+.PHONY: bpf/generate
+bpf/generate:
+	cd ebpf/bpfgen && go generate ./...
+
 ## build: build the application
 .PHONY: build
-build:
-	# Include additional build steps, like TypeScript, SCSS or Tailwind compilation here...
+build: bpf/generate
 	go build -o=build/${BINARY_NAME} ${MAIN_PACKAGE_PATH}
 
 ## run: run the  application

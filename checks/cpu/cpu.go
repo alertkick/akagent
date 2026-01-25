@@ -1,9 +1,9 @@
 package cpu
 
 import (
-	"akagent/checks"
-	"akagent/internal/api"
-	"akagent/logger"
+	"apagent/checks"
+	"apagent/internal/api"
+	"apagent/logger"
 	"context"
 	"encoding/json"
 	"strconv"
@@ -30,7 +30,7 @@ func init() {
 	checks.AddConfig("host.cpu")
 }
 
-// CPUCheck - XXX
+// CPUCheck monitors CPU usage metrics including user, system, idle, and iowait
 type CPUCheck struct {
 	UUID        string
 	Name        string
@@ -118,7 +118,7 @@ func (p CPUUsageStruct) String() string {
 	return string(s)
 }
 
-// totalCpuTime - XXX
+// totalCPUTime calculates the total CPU time from all CPU states
 func totalCPUTime(t cpu.TimesStat) float64 {
 	total := t.User + t.System + t.Nice + t.Iowait + t.Irq + t.Softirq + t.Steal +
 		t.Guest + t.GuestNice + t.Idle

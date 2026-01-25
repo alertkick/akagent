@@ -1,8 +1,58 @@
-*.old
+# Build artifacts
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.deb
+*.rpm
+*.msi
+
+# Test artifacts
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# Dependency directories (use go modules)
+vendor/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Configuration files with credentials
+*.conf
+alertpriority-agent.conf
+alertkick-agent.conf
+
+# Runtime generated files
+machine-id
 *.log
+*.pid
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.old
 *config.json
+agent_checks.json
+
+# API related
 apapi
 devtools
 *.http
-machine-id
-build

@@ -1,8 +1,8 @@
 package falco_manager
 
 import (
-	"akagent/internal/systemd"
-	"akagent/logger"
+	"apagent/internal/systemd"
+	"apagent/logger"
 	"context"
 	"crypto/md5"
 	"encoding/base64"

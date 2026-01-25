@@ -1,10 +1,10 @@
 package all
 
 import (
-	_ "akagent/checks/cpu"
-	_ "akagent/checks/http"
-	_ "akagent/checks/load_avg"
-	_ "akagent/checks/memory"
-	_ "akagent/checks/ports"
-	_ "akagent/checks/services"
+	_ "apagent/checks/cpu"
+	_ "apagent/checks/http"
+	_ "apagent/checks/load_avg"
+	_ "apagent/checks/memory"
+	_ "apagent/checks/ports"
+	_ "apagent/checks/services"
 )

@@ -1,7 +1,7 @@
 package systemd
 
 import (
-	"akagent/logger"
+	"apagent/logger"
 	"context"
 	"os/exec"
 	"strconv"

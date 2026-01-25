@@ -1,7 +1,7 @@
 package client
 
 import (
-	"akagent/logger"
+	"apagent/logger"
 	"encoding/json"
 	"errors"
 	"time"

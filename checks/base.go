@@ -1,9 +1,9 @@
 package checks
 
 import (
-	"akagent/config"
-	"akagent/internal/api"
-	"akagent/logger"
+	"apagent/config"
+	"apagent/internal/api"
+	"apagent/logger"
 	"context"
 	"os"
 	"sync"
@@ -13,17 +13,19 @@ var (
 	log = logger.Sublogger("agent.checks")
 )
 
-// RegisteredChecks - XXX
+// RegisteredChecks holds all available check implementations by name
 var RegisteredChecks = map[string]api.CheckRegistry{}
+
+// RegisteredCheckConfigs holds the configuration for all registered checks
 var RegisteredCheckConfigs []api.CheckConfig
 
-// Add - XXX
+// Add registers a new check implementation
 func Add(name string, check api.CheckRegistry) {
 	log.Debug().Msgf("Adding check: %s", name)
 	RegisteredChecks[name] = check
 }
 
-// AddConfig - XXX
+// AddConfig adds a check type to the registered configurations
 func AddConfig(checkType string) {
 	newCheckConfig := api.CheckConfig{CheckType: checkType}
 	RegisteredCheckConfigs = append(RegisteredCheckConfigs, newCheckConfig)
@@ -56,7 +58,7 @@ func CollectSystemInfo(ctx context.Context) SystemInfo {
 	return systemInfo
 }
 
-// CollectHostData - XXX
+// CollectHostData gathers host-level information including hostname, machine ID, and IP addresses
 func CollectHostData(ctx context.Context) HostData {
 
 	hostname, _ := os.Hostname()
@@ -78,7 +80,7 @@ func CollectHostData(ctx context.Context) HostData {
 	return hostInfo
 }
 
-// CollectSystemData - XXX
+// CollectSystemData gathers system-level information including uptime, packages, and services
 func CollectSystemData() SystemData {
 	var UptimeValue uint64
 	var installedPackages []PackageInfo

@@ -1,8 +1,9 @@
 package agent
 
 import (
-	"akagent/client"
-	"akagent/falco_manager"
+	"apagent/client"
+	"apagent/falco_manager"
+	"apagent/logger"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -10,7 +11,7 @@ import (
 )
 
 func (a *agent) StartFalcoEventSender(shutdown chan struct{}, wg *sync.WaitGroup) {
-	a.log.Debug().Msg("agent.StartFalcoEventSender - starting")
+	a.log.Info().Msg("agent.StartFalcoEventSender - starting")
 	defer wg.Done()
 
 	ticker := time.NewTicker(60 * time.Second)
@@ -19,21 +20,25 @@ func (a *agent) StartFalcoEventSender(shutdown chan struct{}, wg *sync.WaitGroup
 	for {
 		select {
 		case <-shutdown:
-			a.log.Debug().Msg("agent.StartFalcoEventSender - stopping")
+			a.log.Info().Msg("agent.StartFalcoEventSender - stopping")
 			return
 		case <-ticker.C:
 			if a.conn.IsConnected() {
 				a.processQueuedEvents()
 			} else {
 				a.log.Warn().Msg("agent.StartFalcoEventSender - not connected to endpoint, skipping Falco event sending")
-				a.log.Debug().Msgf("agent.StartFalcoEventSender - queue size: %d", len(a.falcoEventQueue))
+				if logger.IsSectionEnabled(logger.SectionFalco) {
+					a.log.Debug().Msgf("agent.StartFalcoEventSender - queue size: %d", len(a.falcoEventQueue))
+				}
 			}
 			if a.isFalcoServiceAgentRunning() != "running" {
 				a.log.Warn().Msg("agent.StartFalcoEventSender - falco-modern-bpf.service is not running, skipping Falco event sending")
 				a.UpdateFalcoAgentServiceStatus("stopped")
 			}
 		case res := <-a.falcoManager.MessageChan:
-			a.log.Debug().Msgf("agent.StartFalcoEventSender - received Falco event: %v", res)
+			if logger.IsSectionEnabled(logger.SectionFalco) {
+				a.log.Debug().Msgf("agent.StartFalcoEventSender - received Falco event: %v", res)
+			}
 			a.queueFalcoEvent(res)
 			if a.conn.IsConnected() {
 				a.processQueuedEvents()
@@ -60,11 +65,15 @@ func (a *agent) processQueuedEvents() {
 	defer a.falcoEventQueueMutex.Unlock()
 
 	if len(a.falcoEventQueue) == 0 {
-		a.log.Debug().Msg("agent.processQueuedEvents - no Falco events to process")
+		if logger.IsSectionEnabled(logger.SectionFalco) {
+			a.log.Debug().Msg("agent.processQueuedEvents - no Falco events to process")
+		}
 		return
 	}
 
-	a.log.Debug().Msgf("agent.processQueuedEvents - processing %d Falco events", len(a.falcoEventQueue))
+	if logger.IsSectionEnabled(logger.SectionFalco) {
+		a.log.Debug().Msgf("agent.processQueuedEvents - processing %d Falco events", len(a.falcoEventQueue))
+	}
 	for len(a.falcoEventQueue) > 0 {
 		event := a.falcoEventQueue[0]
 		err := a.SendFalcoEvents(event)

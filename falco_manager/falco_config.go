@@ -7,16 +7,16 @@ import (
 )
 
 const (
-	falcoMainConfigFile    = "/etc/falco/falco.yaml"
-	falcoConfigDir         = "/etc/falco/config.d/"
-	falcoRulesDir          = "/etc/falco/rules.d/"
-	falcoRulesAlertkickDir = "/etc/falco/rules.alertkick/"
+	falcoMainConfigFile       = "/etc/falco/falco.yaml"
+	falcoConfigDir            = "/etc/falco/config.d/"
+	falcoRulesDir             = "/etc/falco/rules.d/"
+	falcoRulesAlertpriorityDir = "/etc/falco/rules.alertpriority/"
 )
 
 // ListFalcoRulesFiles returns a slice of filenames for all Falco rule files in /etc/falco
 func ListFalcoRulesFiles() ([]string, error) {
-	CheckAndCreateFalcoRulesAlertkickDir()
-	entries, err := os.ReadDir(falcoRulesAlertkickDir)
+	CheckAndCreateFalcoRulesAlertpriorityDir()
+	entries, err := os.ReadDir(falcoRulesAlertpriorityDir)
 	if err != nil {
 		return nil, err
 	}
@@ -32,8 +32,8 @@ func ListFalcoRulesFiles() ([]string, error) {
 
 // ReadFalcoRuleFile reads the content of a specific Falco rule file
 func ReadFalcoRuleFile(filename string) (string, error) {
-	CheckAndCreateFalcoRulesAlertkickDir()
-	content, err := os.ReadFile(filepath.Join(falcoRulesAlertkickDir, filename))
+	CheckAndCreateFalcoRulesAlertpriorityDir()
+	content, err := os.ReadFile(filepath.Join(falcoRulesAlertpriorityDir, filename))
 	if err != nil {
 		return "", err
 	}
@@ -42,19 +42,19 @@ func ReadFalcoRuleFile(filename string) (string, error) {
 
 // WriteFalcoRuleFile writes content to a Falco rule file
 func WriteFalcoRuleFile(filename string, content string) error {
-	CheckAndCreateFalcoRulesAlertkickDir()
-	return os.WriteFile(filepath.Join(falcoRulesAlertkickDir, filename), []byte(content), 0644)
+	CheckAndCreateFalcoRulesAlertpriorityDir()
+	return os.WriteFile(filepath.Join(falcoRulesAlertpriorityDir, filename), []byte(content), 0644)
 }
 
 // DeleteFalcoRuleFile deletes a specific Falco rule file
 func DeleteFalcoRuleFile(filename string) error {
-	CheckAndCreateFalcoRulesAlertkickDir()
-	return os.Remove(filepath.Join(falcoRulesAlertkickDir, filename))
+	CheckAndCreateFalcoRulesAlertpriorityDir()
+	return os.Remove(filepath.Join(falcoRulesAlertpriorityDir, filename))
 }
 
-// CheckAndCreateFalcoRulesAlertkickDir checks if the rules.alertkick directory exists and creates it if it doesn't
-func CheckAndCreateFalcoRulesAlertkickDir() {
-	if _, err := os.Stat(falcoRulesAlertkickDir); os.IsNotExist(err) {
-		os.MkdirAll(falcoRulesAlertkickDir, 0755)
+// CheckAndCreateFalcoRulesAlertpriorityDir checks if the rules.alertpriority directory exists and creates it if it doesn't
+func CheckAndCreateFalcoRulesAlertpriorityDir() {
+	if _, err := os.Stat(falcoRulesAlertpriorityDir); os.IsNotExist(err) {
+		os.MkdirAll(falcoRulesAlertpriorityDir, 0755)
 	}
 }

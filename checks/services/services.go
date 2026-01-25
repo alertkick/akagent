@@ -1,9 +1,9 @@
 package services
 
 import (
-	"akagent/checks"
-	"akagent/internal/api"
-	"akagent/logger"
+	"apagent/checks"
+	"apagent/internal/api"
+	"apagent/logger"
 	"bufio"
 	"context"
 	"encoding/json"

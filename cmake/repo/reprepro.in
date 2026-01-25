@@ -1,6 +1,6 @@
-Codename: alertkick
+Codename: alertpriority
 Components: main
 Architectures: i386 amd64 source
-Origin: AlertKick
-Description: AlertKick Agent
+Origin: AlertPriority
+Description: AlertPriority Agent
 SignWith: B14AB523

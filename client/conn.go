@@ -1,8 +1,9 @@
 package client
 
 import (
-	"akagent/certs"
-	"akagent/config"
+	"apagent/certs"
+	"apagent/config"
+	"apagent/logger"
 	"bufio"
 	"context"
 	"crypto/tls"
@@ -56,7 +57,9 @@ type Connection struct {
 }
 
 func (c *Connection) Close() error {
-	c.log.Debug().Msg("Connection.Close - closing connection, state = StateShuttingDown")
+	if logger.IsSectionEnabled(logger.SectionConnection) {
+		c.log.Debug().Msg("Connection.Close - closing connection, state = StateShuttingDown")
+	}
 	c.state = StateShuttingDown
 	close(c.ServerReqChan) // close this channel otherwise agent watcher loop keeps waiting.
 	if c.conn != nil {
@@ -76,6 +79,13 @@ func (c *Connection) IsConnected() bool {
 }
 
 func NewConnection(conf *config.Config, log zerolog.Logger, version string) *Connection {
+	// Create agent-contextualized logger with agent_id and subdomain
+	agentLog := log.With().
+		Str("agent_id", conf.AgentID).
+		Str("subdomain", conf.Subdomain).
+		Str("component", "connection").
+		Logger()
+
 	connection := &Connection{
 		endpointAddr:      conf.Endpoint,
 		agentID:           conf.AgentID,
@@ -93,7 +103,7 @@ func NewConnection(conf *config.Config, log zerolog.Logger, version string) *Con
 		requests:          make(map[string]chan Response),
 		ServerReqChan:     make(chan Request),
 		timeout:           20,
-		log:               log,
+		log:               agentLog,
 		version:           version,
 	}
 	go connection.StartConnection()
@@ -199,7 +209,9 @@ func (c *Connection) StartConnection() {
 			go c.connReaderLoop(&c.wg)
 			go c.processMessageBytesLoop(&c.wg)
 
-			c.log.Debug().Msg("Connection.StartConnection - Sending handshake message")
+			if logger.IsSectionEnabled(logger.SectionConnection) {
+				c.log.Debug().Msg("Connection.StartConnection - Sending handshake message")
+			}
 			err := c.doHandshake()
 			if err != nil {
 				c.log.Err(err).Msg("Connection.StartConnection - Error during connection handshake")
@@ -219,9 +231,13 @@ func (c *Connection) StartConnection() {
 				delay = time.Second
 			}
 		}
-		c.log.Debug().Msg("Connection.StartConnection - waiting for connReaderLoop, processMessageBytesLoop, and heartbeatLoop to finish")
+		if logger.IsSectionEnabled(logger.SectionConnection) {
+			c.log.Debug().Msg("Connection.StartConnection - waiting for connReaderLoop, processMessageBytesLoop, and heartbeatLoop to finish")
+		}
 		c.wg.Wait()
-		c.log.Debug().Msg("Connection.StartConnection - Connection loops are all closed, retrying")
+		if logger.IsSectionEnabled(logger.SectionConnection) {
+			c.log.Debug().Msg("Connection.StartConnection - Connection loops are all closed, retrying")
+		}
 	}
 }
 
@@ -233,12 +249,17 @@ func (c *Connection) generateRequestID() string {
 }
 
 func (c *Connection) SendJSONMessage(req *Request) (string, chan Response, error) {
-	c.log.Debug().Msgf("SendJSONMessage ID: %s, method: %s, target: %s", req.ID, req.Method, req.Target)
 	requestID := c.generateRequestID()
 	req.ID = requestID
+
+	// Generate correlation ID if not already set
+	if req.CorrelationID == "" {
+		req.CorrelationID = GenerateCorrelationID()
+	}
+
 	jsonData, err := json.Marshal(req)
 	if err != nil {
-		c.log.Err(err).Msg("Connection.SendJSONMessage - Error marshalling request")
+		c.log.Err(err).Msg("SendJSONMessage - Error marshalling request")
 		return "0", nil, err
 	}
 
@@ -249,8 +270,18 @@ func (c *Connection) SendJSONMessage(req *Request) (string, chan Response, error
 	c.requests[requestID] = responseCh
 	c.requestLock.Unlock()
 
-	jsonDataStr := string(jsonData)
-	c.log.Debug().Msgf("Connection.SendJSONMessage - Sending request: %.100s...", jsonDataStr)
+	// Flow logging with [SEND] prefix (only when protocol section is enabled)
+	if logger.IsSectionEnabled(logger.SectionProtocol) {
+		c.log.Debug().
+			Str("correlation_id", req.CorrelationID).
+			Str("id", req.ID).
+			Str("method", req.Method).
+			Msg("[SEND] request")
+
+		if logger.VerboseLevel > 0 {
+			c.log.Debug().Str("data", logger.FormatBytes(jsonData)).Msg("[SEND] request data")
+		}
+	}
 	_, err = c.conn.Write(jsonData)
 	if err != nil {
 		// Remove the response channel from the map on error
@@ -267,18 +298,25 @@ func (c *Connection) SendJSONMessage(req *Request) (string, chan Response, error
 
 // SendJSONMessageNoResponse sends a JSON message without expecting a response
 func (c *Connection) SendJSONMessageNoResponse(msg Response) error {
-	c.log.Debug().Msgf("SendJSONMessageNoResponse ID: %s, target: %s", msg.ID, msg.Target)
 	jsonData, err := json.Marshal(msg)
 	if err != nil {
-		c.log.Err(err).Msg("Connection.SendJSONMessageNoResponse - Error marshalling response")
+		c.log.Err(err).Msg("[SEND] Error marshalling response")
 		return err
 	}
 
-	jsonDataStr := string(jsonData)
-	c.log.Debug().Msgf("Connection.SendJSONMessageNoResponse - Sending response: %.100s...", jsonDataStr)
+	if logger.IsSectionEnabled(logger.SectionProtocol) {
+		c.log.Debug().
+			Str("id", msg.ID).
+			Str("correlation_id", msg.CorrelationID).
+			Msg("[SEND] response (no-reply)")
+
+		if logger.VerboseLevel > 0 {
+			c.log.Debug().Str("data", logger.FormatBytes(jsonData)).Msg("[SEND] response data")
+		}
+	}
 	_, err = c.conn.Write(jsonData)
 	if err != nil {
-		c.log.Err(err).Msg("Connection.SendJSONMessageNoResponse - Error sending response")
+		c.log.Err(err).Msg("[SEND] Error sending response")
 		return err
 	}
 
@@ -287,20 +325,22 @@ func (c *Connection) SendJSONMessageNoResponse(msg Response) error {
 
 // CheckResultsPost sends a JSON message without expecting a response
 func (c *Connection) CheckResultsPost(msg CheckResultsPost) error {
-	c.log.Debug().Msgf("Connection.CheckResultsPost: ID: %s, Target: %s, method: %s", msg.ID, msg.Target, msg.Method)
+	if logger.IsSectionEnabled(logger.SectionMetrics) {
+		c.log.Debug().Msgf("Connection.CheckResultsPost: ID: %s, Target: %s, method: %s", msg.ID, msg.Target, msg.Method)
+	}
 	if c.State() != StateConnected {
 		return errors.New("not connected")
 	}
 
-	c.log.Debug().Msgf("Connection.CheckResultsPost - SendCheckResults: %v", msg)
 	jsonData, err := json.Marshal(msg)
 	if err != nil {
 		c.log.Err(err).Msg("Connection.CheckResultsPost - Error marshalling CheckResultsPost")
 		return err
 	}
 
-	jsonDataStr := string(jsonData)
-	c.log.Debug().Msgf("Connection.CheckResultsPost - Sending CheckResultsPost: %.100s...", jsonDataStr)
+	if logger.VerboseLevel > 0 && logger.IsSectionEnabled(logger.SectionMetrics) {
+		c.log.Debug().Str("data", logger.FormatBytes(jsonData)).Msg("CheckResultsPost - Sending")
+	}
 	_, err = c.conn.Write(jsonData)
 	if err != nil {
 		c.log.Err(err).Msg("Connection.CheckResultsPost - Error sending CheckResultsPost")
@@ -311,7 +351,9 @@ func (c *Connection) CheckResultsPost(msg CheckResultsPost) error {
 }
 
 func (c *Connection) FalcoEventsPost(msg FalcoEventsPost) error {
-	c.log.Debug().Msgf("Connection.FalcoEventsPost: ID: %s, method: %s", msg.ID, msg.Method)
+	if logger.IsSectionEnabled(logger.SectionFalco) {
+		c.log.Debug().Msgf("Connection.FalcoEventsPost: ID: %s, method: %s", msg.ID, msg.Method)
+	}
 	if c.State() != StateConnected {
 		return errors.New("not connected")
 	}
@@ -322,12 +364,41 @@ func (c *Connection) FalcoEventsPost(msg FalcoEventsPost) error {
 		return err
 	}
 
-	jsonDataStr := string(jsonData)
-	c.log.Debug().Msgf("Connection.FalcoEventsPost - Sending FalcoEventsPost: %.100s...", jsonDataStr)
+	if logger.VerboseLevel > 0 && logger.IsSectionEnabled(logger.SectionFalco) {
+		c.log.Debug().Str("data", logger.FormatBytes(jsonData)).Msg("FalcoEventsPost - Sending")
+	}
 
 	_, err = c.conn.Write(jsonData)
 	if err != nil {
 		c.log.Err(err).Msg("Connection.FalcoEventsPost - Error sending FalcoEventsPost")
+		return err
+	}
+
+	return nil
+}
+
+// SecurityEventsPost sends a unified security event from any eBPF agent
+func (c *Connection) SecurityEventsPost(msg SecurityEventsPost) error {
+	if logger.IsSectionEnabled(logger.SectionFalco) {
+		c.log.Debug().Msgf("Connection.SecurityEventsPost: ID: %s, method: %s, agent_type: %s", msg.ID, msg.Method, msg.AgentType)
+	}
+	if c.State() != StateConnected {
+		return ErrNotConnected
+	}
+
+	jsonData, err := json.Marshal(msg)
+	if err != nil {
+		c.log.Err(err).Msg("Connection.SecurityEventsPost - Error marshalling SecurityEventsPost")
+		return err
+	}
+
+	if logger.VerboseLevel > 0 && logger.IsSectionEnabled(logger.SectionFalco) {
+		c.log.Debug().Str("data", logger.FormatBytes(jsonData)).Msg("SecurityEventsPost - Sending")
+	}
+
+	_, err = c.conn.Write(jsonData)
+	if err != nil {
+		c.log.Err(err).Msg("Connection.SecurityEventsPost - Error sending SecurityEventsPost")
 		return err
 	}
 
@@ -340,7 +411,9 @@ func (c *Connection) processMessageBytes(data []byte) error {
 	}
 
 	if string(data) == "Connection closed\n" {
-		c.log.Debug().Msg("Connection.processMessageBytes - received `Connection closed` message")
+		if logger.IsSectionEnabled(logger.SectionConnection) {
+			c.log.Debug().Msg("Connection.processMessageBytes - received `Connection closed` message")
+		}
 		c.state = StateDisconnected
 		return errors.New("connection closed")
 	}
@@ -350,41 +423,59 @@ func (c *Connection) processMessageBytes(data []byte) error {
 	var resp Response
 	err := json.Unmarshal(data, &req)
 	if err != nil {
-		c.log.Error().Err(err).Msg("Connection.processMessageBytes - failed to unmarshal request")
-		c.log.Debug().Msgf("Connection.processMessageBytes - received message: %s", string(data))
+		c.log.Error().Err(err).Msg("processMessageBytes - failed to unmarshal request")
+		if logger.VerboseLevel > 0 && logger.IsSectionEnabled(logger.SectionProtocol) {
+			c.log.Debug().Str("data", logger.FormatBytes(data)).Msg("processMessageBytes - raw message")
+		}
 		return err
 	}
 
-	// Dump the values of the request with keys
-	requestJSON, err := json.Marshal(req)
-	if err != nil {
-		c.log.Error().Err(err).Msg("Connection.processMessageBytes - failed to marshal request to JSON")
-	} else {
-		c.log.Debug().Msgf("Connection.processMessageBytes - received message: %s", requestJSON)
+	// Log received message with [RECV] prefix and correlation ID
+	if logger.IsSectionEnabled(logger.SectionProtocol) {
+		c.log.Debug().
+			Str("id", req.ID).
+			Str("method", req.Method).
+			Str("correlation_id", req.CorrelationID).
+			Msg("[RECV] message")
+	}
+	if logger.VerboseLevel > 0 && logger.IsSectionEnabled(logger.SectionProtocol) {
+		c.log.Debug().Str("data", logger.FormatBytes(data)).Msg("[RECV] message data")
 	}
 
 	// Check if it's a response
 	if req.Method == "" {
-		c.log.Debug().Msgf("Connection.processMessageBytes - response with id: %s", req.ID)
 		// It's a response, Unmarshal it and send to the corresponding request channel
 		err := json.Unmarshal(data, &resp)
 		if err != nil {
-			c.log.Err(err).Msg("Connection.processMessageBytes - failed to unmarshal response")
+			c.log.Err(err).Msg("[RECV] failed to unmarshal response")
 		}
 		c.requestLock.Lock()
 		requestCh, exists := c.requests[req.ID]
 		if exists {
-			c.log.Debug().Msgf("Connection.processMessageBytes - response for requestID: %s, responseID: %s", req.ID, resp.ID)
+			if logger.IsSectionEnabled(logger.SectionProtocol) {
+				c.log.Debug().
+					Str("id", req.ID).
+					Str("correlation_id", resp.CorrelationID).
+					Msg("[RECV] response matched")
+			}
 			requestCh <- resp
 			close(requestCh)
 			delete(c.requests, req.ID)
 		} else {
-			c.log.Info().Msg("Connection.processMessageBytes - orphan response, no matching request channel found.")
-			c.log.Info().Msgf("Connection.processMessageBytes - response: %v", resp)
+			c.log.Warn().
+				Str("id", req.ID).
+				Str("correlation_id", resp.CorrelationID).
+				Msg("[RECV] orphan response, no matching request")
 		}
 		c.requestLock.Unlock()
 	} else {
-		c.log.Debug().Msgf("Connection.processMessageBytes - request with method: %s and id: %s, passing to serverReqChan", req.Method, req.ID)
+		if logger.IsSectionEnabled(logger.SectionProtocol) {
+			c.log.Debug().
+				Str("method", req.Method).
+				Str("id", req.ID).
+				Str("correlation_id", req.CorrelationID).
+				Msg("[RECV] request, forwarding to handler")
+		}
 		// It's a request, add it to serverReqChan.
 		c.ServerReqChan <- req
 	}
@@ -395,7 +486,9 @@ func (c *Connection) processMessageBytes(data []byte) error {
 func (c *Connection) connReaderLoop(wg *sync.WaitGroup) {
 	reader := bufio.NewReader(c.conn)
 
-	c.log.Debug().Msg("connReaderLoop - start")
+	if logger.IsSectionEnabled(logger.SectionConnection) {
+		c.log.Debug().Msg("connReaderLoop - start")
+	}
 
 	for c.State() == StateConnected || c.State() == StateConnecting {
 		message, err := reader.ReadString('\n')
@@ -410,15 +503,21 @@ func (c *Connection) connReaderLoop(wg *sync.WaitGroup) {
 		// Send the received message to the message channel
 		c.messageChan <- []byte(message)
 	}
-	c.log.Debug().Msg("connReaderLoop - sending Connection closed message to messageChan")
+	if logger.IsSectionEnabled(logger.SectionConnection) {
+		c.log.Debug().Msg("connReaderLoop - sending Connection closed message to messageChan")
+	}
 	c.messageChan <- []byte("Connection closed\n")
-	c.log.Debug().Msg("connReaderLoop - done")
+	if logger.IsSectionEnabled(logger.SectionConnection) {
+		c.log.Debug().Msg("connReaderLoop - done")
+	}
 	wg.Done()
 }
 
 // processMessageBytesLoop - reads messages from the message channel and processes them
 func (c *Connection) processMessageBytesLoop(wg *sync.WaitGroup) {
-	c.log.Debug().Msg("processMessageBytesLoop - start")
+	if logger.IsSectionEnabled(logger.SectionConnection) {
+		c.log.Debug().Msg("processMessageBytesLoop - start")
+	}
 	for c.State() == StateConnected || c.State() == StateConnecting {
 		message := <-c.messageChan // <- blocks for loop.
 		// add select/switch if more than one use case
@@ -427,7 +526,9 @@ func (c *Connection) processMessageBytesLoop(wg *sync.WaitGroup) {
 			c.log.Err(err).Msg("Connection.processMessageBytesLoop - Error handling message")
 		}
 	}
-	c.log.Debug().Msg("Connection.processMessageBytesLoop - done")
+	if logger.IsSectionEnabled(logger.SectionConnection) {
+		c.log.Debug().Msg("Connection.processMessageBytesLoop - done")
+	}
 	wg.Done()
 }
 
@@ -435,9 +536,13 @@ func (c *Connection) processMessageBytesLoop(wg *sync.WaitGroup) {
 func (c *Connection) startHeartbeatLoop(wg *sync.WaitGroup) {
 	// we need to watch for failures and after 3 failures, we need to mark connection as disconnected
 	failureCount := 0
-	c.log.Debug().Msg("Connection.startHeartbeatLoop - start")
+	if logger.IsSectionEnabled(logger.SectionHeartbeat) {
+		c.log.Debug().Msg("Connection.startHeartbeatLoop - start")
+	}
 	duration := time.Duration(c.heartbeatInterval) * time.Second
-	c.log.Debug().Msgf("Connection.startHeartbeatLoop - Heartbeat interval: %f seconds", duration.Seconds())
+	if logger.IsSectionEnabled(logger.SectionHeartbeat) {
+		c.log.Debug().Msgf("Connection.startHeartbeatLoop - Heartbeat interval: %f seconds", duration.Seconds())
+	}
 	for c.State() == StateConnected {
 		err := c.doHeartbeat()
 		if err != nil {
@@ -452,6 +557,8 @@ func (c *Connection) startHeartbeatLoop(wg *sync.WaitGroup) {
 		}
 		time.Sleep(duration)
 	}
-	c.log.Debug().Msg("Connection.startHeartbeatLoop - done")
+	if logger.IsSectionEnabled(logger.SectionHeartbeat) {
+		c.log.Debug().Msg("Connection.startHeartbeatLoop - done")
+	}
 	wg.Done()
 }

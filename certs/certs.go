@@ -1,6 +1,6 @@
 package certs
 
-// CACert is the CA certificate used to verify server certificates
+// CACert is the CA certificate used to verify AlertPriority server certificates
 var CACert = []byte(`-----BEGIN CERTIFICATE-----
 MIIFUTCCAzmgAwIBAgIUKOFzcRtSxlYA97nGruEkFwXXa9EwDQYJKoZIhvcNAQEL
 BQAwODEVMBMGA1UEAwwMQWxlcnRLaWNrIENBMRIwEAYDVQQKDAlBbGVydEtpY2sx

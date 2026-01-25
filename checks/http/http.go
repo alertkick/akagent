@@ -1,9 +1,9 @@
 package memory
 
 import (
-	"akagent/checks"
-	"akagent/internal/api"
-	"akagent/logger"
+	"apagent/checks"
+	"apagent/internal/api"
+	"apagent/logger"
 	"context"
 	"encoding/json"
 	"net/http"

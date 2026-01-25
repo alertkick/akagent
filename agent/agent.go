@@ -1,13 +1,14 @@
 package agent
 
 import (
-	"akagent/checker"
-	"akagent/checks"
-	"akagent/client"
-	"akagent/config"
-	"akagent/falco_manager"
-	"akagent/internal/api"
-	"akagent/internal/systemd"
+	"apagent/checker"
+	"apagent/checks"
+	"apagent/client"
+	"apagent/config"
+	"apagent/ebpf"
+	"apagent/falco_manager"
+	"apagent/internal/api"
+	"apagent/internal/systemd"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,12 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
+
+	// Import agent implementations to register them
+	_ "apagent/ebpf/agents/falco"
+	_ "apagent/ebpf/agents/native"
+	_ "apagent/ebpf/agents/pixie"
+	_ "apagent/ebpf/agents/tetragon"
 )
 
 const (
@@ -54,34 +61,53 @@ type agent struct {
 	log                zerolog.Logger
 	shutdown           chan struct{}
 	falcoShutdown      chan struct{}
+	ctx                context.Context
+	cancelFunc         context.CancelFunc
 
+	// Legacy Falco event queue (for backward compatibility)
 	falcoEventQueue         []falco_manager.FalcoEventPayload
 	falcoEventQueueMutex    sync.Mutex
 	falcoEventMaxQueueSize  int
+
+	// Check result queue
 	checkResultQueue        []api.CheckMetricParams
 	checkResultQueueMutex   sync.Mutex
 	checkResultMaxQueueSize int
+
+	// Multi-eBPF agent support
+	ebpfManager               *ebpf.AgentManager
+	securityEventQueue        []ebpf.SecurityEvent
+	securityEventQueueMutex   sync.Mutex
+	securityEventMaxQueueSize int
+	useNewEBPFManager         bool // Flag to use new multi-agent system
 }
 
 func NewAgentClient(conf *config.Config, kernalVersion string, log zerolog.Logger, version string) (*agent, error) {
 
 	RPCConn := client.NewConnection(conf, log, version)
+	ctx, cancel := context.WithCancel(context.Background())
+
 	agent := agent{
-		log:                     log,
-		conn:                    RPCConn,
-		AgentID:                 conf.AgentID,
-		AgentName:               conf.AgentName,
-		Subdomain:               conf.Subdomain,
-		Tenant:                  conf.Subdomain,
-		agentToken:              conf.AgentToken,
-		FalcoEnabled:            conf.FalcoEnabled,
-		heartbeatInterval:       10,
-		sentHeartbeatCount:      0,
-		timeout:                 10,
-		falcoEventQueue:         make([]falco_manager.FalcoEventPayload, 0, 1000),
-		checkResultQueue:        make([]api.CheckMetricParams, 0, 1000),
-		falcoEventMaxQueueSize:  1000,
-		checkResultMaxQueueSize: 1000,
+		log:                       log,
+		conn:                      RPCConn,
+		AgentID:                   conf.AgentID,
+		AgentName:                 conf.AgentName,
+		Subdomain:                 conf.Subdomain,
+		Tenant:                    conf.Subdomain,
+		agentToken:                conf.AgentToken,
+		FalcoEnabled:              conf.FalcoEnabled,
+		heartbeatInterval:         10,
+		sentHeartbeatCount:        0,
+		timeout:                   10,
+		ctx:                       ctx,
+		cancelFunc:                cancel,
+		falcoEventQueue:           make([]falco_manager.FalcoEventPayload, 0, 1000),
+		checkResultQueue:          make([]api.CheckMetricParams, 0, 1000),
+		securityEventQueue:        make([]ebpf.SecurityEvent, 0, 1000),
+		falcoEventMaxQueueSize:    1000,
+		checkResultMaxQueueSize:   1000,
+		securityEventMaxQueueSize: 1000,
+		useNewEBPFManager:         true, // Enable the new multi-agent system
 	}
 
 	if conf.Debug {
@@ -103,6 +129,8 @@ func NewAgentClient(conf *config.Config, kernalVersion string, log zerolog.Logge
 func (a *agent) Run(shutdown chan struct{}) error {
 	a.shutdown = shutdown
 	ctx, cancel := context.WithCancel(context.Background())
+	a.ctx = ctx
+	a.cancelFunc = cancel
 	defer cancel()
 
 	a.log.Debug().Msg("agent.Run - start")
@@ -118,23 +146,55 @@ func (a *agent) Run(shutdown chan struct{}) error {
 	go a.StartResultSender(shutdown, &a.wg)
 	go a.checkerManager.Start()
 
-	// Start falco manager if falco is enabled
-	a.falcoManager = falco_manager.NewFalcoManager()
-	if a.FalcoEnabled {
-		a.StartFalcoListener()
-		a.log.Info().Msg("agent.Run - falco listener started")
+	// Initialize eBPF agent manager (new multi-agent system)
+	if a.useNewEBPFManager {
+		a.log.Info().Msg("agent.Run - initializing eBPF agent manager")
+		a.ebpfManager = ebpf.NewAgentManager(ebpf.DefaultManagerConfig())
+		if err := a.ebpfManager.Initialize(ctx); err != nil {
+			a.log.Warn().Err(err).Msg("agent.Run - failed to initialize eBPF agent manager")
+		}
+
+		// Enable Falco agent if FalcoEnabled is set (backward compatibility)
+		if a.FalcoEnabled {
+			if err := a.ebpfManager.EnableAgent(ctx, ebpf.AgentTypeFalco); err != nil {
+				a.log.Warn().Err(err).Msg("agent.Run - failed to enable Falco agent via manager")
+			} else {
+				a.log.Info().Msg("agent.Run - Falco agent enabled via eBPF manager")
+			}
+		}
+
+		// Start unified eBPF event sender
+		ebpfShutdown := make(chan struct{})
+		a.wg.Add(1)
+		go a.StartEBPFEventSender(ebpfShutdown, &a.wg)
+
+		// Wait for shutdown signal
+		<-shutdown
+		close(ebpfShutdown)
+		a.log.Debug().Msg("agent.Run - Shutdown signal received, shutting down eBPF manager")
+		if err := a.ebpfManager.Shutdown(ctx); err != nil {
+			a.log.Warn().Err(err).Msg("agent.Run - error shutting down eBPF manager")
+		}
 	} else {
-		a.log.Info().Msg("agent.Run - falco listener not started because falco is not enabled")
+		// Legacy Falco-only path
+		a.falcoManager = falco_manager.NewFalcoManager()
+		if a.FalcoEnabled {
+			a.StartFalcoListener()
+			a.log.Info().Msg("agent.Run - falco listener started (legacy)")
+		} else {
+			a.log.Info().Msg("agent.Run - falco listener not started because falco is not enabled")
+		}
+
+		falcoShutdown := make(chan struct{})
+		a.wg.Add(1)
+		go a.StartFalcoEventSender(falcoShutdown, &a.wg)
+
+		// Wait for shutdown signal
+		<-shutdown
+		a.StopFalcoListener()
+		close(falcoShutdown)
 	}
 
-	falcoShutdown := make(chan struct{})
-	a.wg.Add(1)
-	go a.StartFalcoEventSender(falcoShutdown, &a.wg)
-
-	// Wait for shutdown signal
-	<-shutdown
-	a.StopFalcoListener()
-	close(falcoShutdown)
 	a.log.Debug().Msg("agent.Run - Shutdown signal received, shutting down")
 	close(requestWatcherShutdown)
 	cancel()
@@ -247,6 +307,25 @@ func (a *agent) HandleServerRequest(req client.Request) error {
 	case "falco_config.test":
 		a.log.Debug().Msg("agent.HandleServerRequest - received falco_config.test request")
 		a.handleFalcoConfigTestRequest(req)
+	// Native eBPF agent handlers
+	case "native_config.get":
+		a.log.Debug().Msg("agent.HandleServerRequest - received native_config.get request")
+		a.handleNativeConfigGetRequest(req)
+	case "native_config.update":
+		a.log.Debug().Msg("agent.HandleServerRequest - received native_config.update request")
+		a.handleNativeConfigUpdateRequest(req)
+	case "enable_native_agent":
+		a.log.Debug().Msg("agent.HandleServerRequest - received enable_native_agent request")
+		a.handleEnableNativeAgentRequest(req)
+	case "disable_native_agent":
+		a.log.Debug().Msg("agent.HandleServerRequest - received disable_native_agent request")
+		a.handleDisableNativeAgentRequest(req)
+	case "native_agent.status":
+		a.log.Debug().Msg("agent.HandleServerRequest - received native_agent.status request")
+		a.handleNativeAgentStatusRequest(req)
+	case "refresh_native_config":
+		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_native_config request")
+		a.handleRefreshNativeConfigRequest(req)
 	default:
 		// we need to send a response to the server to indicate that the request is not supported
 		a.log.Warn().Msgf("agent.HandleServerRequest - unknown method: %s", req.Method)
@@ -300,10 +379,10 @@ func (a *agent) handleEnableFalcoRequest(req client.Request) {
 	v.Set("http_output.url", "http://127.0.0.1:2801")
 	v.Set("http_output.insecure", true)
 
-	// create the rules.alertkick directory if it doesn't exist
-	rulesAlertkickDir := "/etc/falco/rules.alertkick"
-	if _, err := os.Stat(rulesAlertkickDir); os.IsNotExist(err) {
-		os.MkdirAll(rulesAlertkickDir, 0755)
+	// create the rules.alertpriority directory if it doesn't exist
+	rulesAlertpriorityDir := "/etc/falco/rules.alertpriority"
+	if _, err := os.Stat(rulesAlertpriorityDir); os.IsNotExist(err) {
+		os.MkdirAll(rulesAlertpriorityDir, 0755)
 	}
 
 	// create the rules.d directory if it doesn't exist
@@ -318,12 +397,12 @@ func (a *agent) handleEnableFalcoRequest(req client.Request) {
 			"/etc/falco/falco_rules.yaml",
 			"/etc/falco/falco_rules.local.yaml",
 			"/etc/falco/rules.d",
-			"/etc/falco/rules.alertkick",
+			"/etc/falco/rules.alertpriority",
 		}
 	} else {
-		// check if the rules.alertkick is missing in ruleFilesDirs, and add it.
-		if !slices.Contains(ruleFilesDirs, "/etc/falco/rules.alertkick") {
-			ruleFilesDirs = append(ruleFilesDirs, "/etc/falco/rules.alertkick")
+		// check if the rules.alertpriority is missing in ruleFilesDirs, and add it.
+		if !slices.Contains(ruleFilesDirs, "/etc/falco/rules.alertpriority") {
+			ruleFilesDirs = append(ruleFilesDirs, "/etc/falco/rules.alertpriority")
 		}
 	}
 	v.Set("rules_files", ruleFilesDirs)
