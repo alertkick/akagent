@@ -12,7 +12,7 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type processProcessEvent struct {
+type ProcessProcessEvent struct {
 	TimestampNs   uint64
 	EventType     uint32
 	Pid           uint32
@@ -28,28 +28,28 @@ type processProcessEvent struct {
 	_             [4]byte
 }
 
-// loadProcess returns the embedded CollectionSpec for process.
-func loadProcess() (*ebpf.CollectionSpec, error) {
+// LoadProcess returns the embedded CollectionSpec for Process.
+func LoadProcess() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_ProcessBytes)
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
 	if err != nil {
-		return nil, fmt.Errorf("can't load process: %w", err)
+		return nil, fmt.Errorf("can't load Process: %w", err)
 	}
 
 	return spec, err
 }
 
-// loadProcessObjects loads process and converts it into a struct.
+// LoadProcessObjects loads Process and converts it into a struct.
 //
 // The following types are suitable as obj argument:
 //
-//	*processObjects
-//	*processPrograms
-//	*processMaps
+//	*ProcessObjects
+//	*ProcessPrograms
+//	*ProcessMaps
 //
 // See ebpf.CollectionSpec.LoadAndAssign documentation for details.
-func loadProcessObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
-	spec, err := loadProcess()
+func LoadProcessObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
+	spec, err := LoadProcess()
 	if err != nil {
 		return err
 	}
@@ -57,72 +57,90 @@ func loadProcessObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	return spec.LoadAndAssign(obj, opts)
 }
 
-// processSpecs contains maps and programs before they are loaded into the kernel.
+// ProcessSpecs contains maps and programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type processSpecs struct {
-	processProgramSpecs
-	processMapSpecs
+type ProcessSpecs struct {
+	ProcessProgramSpecs
+	ProcessMapSpecs
 }
 
-// processSpecs contains programs before they are loaded into the kernel.
+// ProcessSpecs contains programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type processProgramSpecs struct {
+type ProcessProgramSpecs struct {
 	TracepointSyscallsSysEnterClone  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_clone"`
 	TracepointSyscallsSysEnterKill   *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_kill"`
 	TracepointSyscallsSysEnterPtrace *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_ptrace"`
+	TracepointSyscallsSysEnterTgkill *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_tgkill"`
+	TracepointSyscallsSysEnterTkill  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_tkill"`
 }
 
-// processMapSpecs contains maps before they are loaded into the kernel.
+// ProcessMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type processMapSpecs struct {
+type ProcessMapSpecs struct {
+	DiscardComms  *ebpf.MapSpec `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.MapSpec `ebpf:"discard_config"`
+	DiscardPids   *ebpf.MapSpec `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.MapSpec `ebpf:"discard_stats"`
 	ProcessEvents *ebpf.MapSpec `ebpf:"process_events"`
 }
 
-// processObjects contains all objects after they have been loaded into the kernel.
+// ProcessObjects contains all objects after they have been loaded into the kernel.
 //
-// It can be passed to loadProcessObjects or ebpf.CollectionSpec.LoadAndAssign.
-type processObjects struct {
-	processPrograms
-	processMaps
+// It can be passed to LoadProcessObjects or ebpf.CollectionSpec.LoadAndAssign.
+type ProcessObjects struct {
+	ProcessPrograms
+	ProcessMaps
 }
 
-func (o *processObjects) Close() error {
+func (o *ProcessObjects) Close() error {
 	return _ProcessClose(
-		&o.processPrograms,
-		&o.processMaps,
+		&o.ProcessPrograms,
+		&o.ProcessMaps,
 	)
 }
 
-// processMaps contains all maps after they have been loaded into the kernel.
+// ProcessMaps contains all maps after they have been loaded into the kernel.
 //
-// It can be passed to loadProcessObjects or ebpf.CollectionSpec.LoadAndAssign.
-type processMaps struct {
+// It can be passed to LoadProcessObjects or ebpf.CollectionSpec.LoadAndAssign.
+type ProcessMaps struct {
+	DiscardComms  *ebpf.Map `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.Map `ebpf:"discard_config"`
+	DiscardPids   *ebpf.Map `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.Map `ebpf:"discard_stats"`
 	ProcessEvents *ebpf.Map `ebpf:"process_events"`
 }
 
-func (m *processMaps) Close() error {
+func (m *ProcessMaps) Close() error {
 	return _ProcessClose(
+		m.DiscardComms,
+		m.DiscardConfig,
+		m.DiscardPids,
+		m.DiscardStats,
 		m.ProcessEvents,
 	)
 }
 
-// processPrograms contains all programs after they have been loaded into the kernel.
+// ProcessPrograms contains all programs after they have been loaded into the kernel.
 //
-// It can be passed to loadProcessObjects or ebpf.CollectionSpec.LoadAndAssign.
-type processPrograms struct {
+// It can be passed to LoadProcessObjects or ebpf.CollectionSpec.LoadAndAssign.
+type ProcessPrograms struct {
 	TracepointSyscallsSysEnterClone  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_clone"`
 	TracepointSyscallsSysEnterKill   *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_kill"`
 	TracepointSyscallsSysEnterPtrace *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_ptrace"`
+	TracepointSyscallsSysEnterTgkill *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_tgkill"`
+	TracepointSyscallsSysEnterTkill  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_tkill"`
 }
 
-func (p *processPrograms) Close() error {
+func (p *ProcessPrograms) Close() error {
 	return _ProcessClose(
 		p.TracepointSyscallsSysEnterClone,
 		p.TracepointSyscallsSysEnterKill,
 		p.TracepointSyscallsSysEnterPtrace,
+		p.TracepointSyscallsSysEnterTgkill,
+		p.TracepointSyscallsSysEnterTkill,
 	)
 }
 

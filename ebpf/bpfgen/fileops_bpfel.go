@@ -12,7 +12,7 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type fileopsFileEvent struct {
+type FileopsFileEvent struct {
 	TimestampNs uint64
 	EventType   uint32
 	Pid         uint32
@@ -24,31 +24,43 @@ type fileopsFileEvent struct {
 	Filename2   [256]int8
 	Flags       int32
 	RetCode     int32
+	NewUid      uint32
+	NewGid      uint32
 	_           [4]byte
 }
 
-// loadFileops returns the embedded CollectionSpec for fileops.
-func loadFileops() (*ebpf.CollectionSpec, error) {
+type FileopsOpenatCtx struct {
+	Filename [256]int8
+	Flags    int32
+	Pid      uint32
+	Ppid     uint32
+	Uid      uint32
+	Gid      uint32
+	Comm     [16]int8
+}
+
+// LoadFileops returns the embedded CollectionSpec for Fileops.
+func LoadFileops() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_FileopsBytes)
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
 	if err != nil {
-		return nil, fmt.Errorf("can't load fileops: %w", err)
+		return nil, fmt.Errorf("can't load Fileops: %w", err)
 	}
 
 	return spec, err
 }
 
-// loadFileopsObjects loads fileops and converts it into a struct.
+// LoadFileopsObjects loads Fileops and converts it into a struct.
 //
 // The following types are suitable as obj argument:
 //
-//	*fileopsObjects
-//	*fileopsPrograms
-//	*fileopsMaps
+//	*FileopsObjects
+//	*FileopsPrograms
+//	*FileopsMaps
 //
 // See ebpf.CollectionSpec.LoadAndAssign documentation for details.
-func loadFileopsObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
-	spec, err := loadFileops()
+func LoadFileopsObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
+	spec, err := LoadFileops()
 	if err != nil {
 		return err
 	}
@@ -56,75 +68,171 @@ func loadFileopsObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	return spec.LoadAndAssign(obj, opts)
 }
 
-// fileopsSpecs contains maps and programs before they are loaded into the kernel.
+// FileopsSpecs contains maps and programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type fileopsSpecs struct {
-	fileopsProgramSpecs
-	fileopsMapSpecs
+type FileopsSpecs struct {
+	FileopsProgramSpecs
+	FileopsMapSpecs
 }
 
-// fileopsSpecs contains programs before they are loaded into the kernel.
+// FileopsSpecs contains programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type fileopsProgramSpecs struct {
-	TracepointSyscallsSysEnterFchmodat  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_fchmodat"`
-	TracepointSyscallsSysEnterOpenat    *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_openat"`
-	TracepointSyscallsSysEnterRenameat2 *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_renameat2"`
-	TracepointSyscallsSysEnterUnlinkat  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_unlinkat"`
+type FileopsProgramSpecs struct {
+	TracepointSyscallsSysEnterChmod          *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_chmod"`
+	TracepointSyscallsSysEnterChown          *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_chown"`
+	TracepointSyscallsSysEnterFchmod         *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_fchmod"`
+	TracepointSyscallsSysEnterFchmodat       *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_fchmodat"`
+	TracepointSyscallsSysEnterFchown         *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_fchown"`
+	TracepointSyscallsSysEnterFchownat       *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_fchownat"`
+	TracepointSyscallsSysEnterFremovexattr   *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_fremovexattr"`
+	TracepointSyscallsSysEnterFsetxattr      *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_fsetxattr"`
+	TracepointSyscallsSysEnterFtruncate      *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_ftruncate"`
+	TracepointSyscallsSysEnterLchown         *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_lchown"`
+	TracepointSyscallsSysEnterLinkat         *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_linkat"`
+	TracepointSyscallsSysEnterLremovexattr   *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_lremovexattr"`
+	TracepointSyscallsSysEnterLsetxattr      *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_lsetxattr"`
+	TracepointSyscallsSysEnterMkdir          *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_mkdir"`
+	TracepointSyscallsSysEnterMkdirat        *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_mkdirat"`
+	TracepointSyscallsSysEnterOpen           *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_open"`
+	TracepointSyscallsSysEnterOpenByHandleAt *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_open_by_handle_at"`
+	TracepointSyscallsSysEnterOpenat         *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_openat"`
+	TracepointSyscallsSysEnterOpenat2        *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_openat2"`
+	TracepointSyscallsSysEnterRemovexattr    *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_removexattr"`
+	TracepointSyscallsSysEnterRename         *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_rename"`
+	TracepointSyscallsSysEnterRenameat       *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_renameat"`
+	TracepointSyscallsSysEnterRenameat2      *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_renameat2"`
+	TracepointSyscallsSysEnterRmdir          *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_rmdir"`
+	TracepointSyscallsSysEnterSetxattr       *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setxattr"`
+	TracepointSyscallsSysEnterSymlinkat      *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_symlinkat"`
+	TracepointSyscallsSysEnterTruncate       *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_truncate"`
+	TracepointSyscallsSysEnterUnlink         *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_unlink"`
+	TracepointSyscallsSysEnterUnlinkat       *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_unlinkat"`
+	TracepointSyscallsSysEnterUtimensat      *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_utimensat"`
+	TracepointSyscallsSysExitOpenat          *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_exit_openat"`
 }
 
-// fileopsMapSpecs contains maps before they are loaded into the kernel.
+// FileopsMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type fileopsMapSpecs struct {
-	FileEvents *ebpf.MapSpec `ebpf:"file_events"`
+type FileopsMapSpecs struct {
+	DiscardComms  *ebpf.MapSpec `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.MapSpec `ebpf:"discard_config"`
+	DiscardPids   *ebpf.MapSpec `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.MapSpec `ebpf:"discard_stats"`
+	FileEvents    *ebpf.MapSpec `ebpf:"file_events"`
+	OpenatContext *ebpf.MapSpec `ebpf:"openat_context"`
 }
 
-// fileopsObjects contains all objects after they have been loaded into the kernel.
+// FileopsObjects contains all objects after they have been loaded into the kernel.
 //
-// It can be passed to loadFileopsObjects or ebpf.CollectionSpec.LoadAndAssign.
-type fileopsObjects struct {
-	fileopsPrograms
-	fileopsMaps
+// It can be passed to LoadFileopsObjects or ebpf.CollectionSpec.LoadAndAssign.
+type FileopsObjects struct {
+	FileopsPrograms
+	FileopsMaps
 }
 
-func (o *fileopsObjects) Close() error {
+func (o *FileopsObjects) Close() error {
 	return _FileopsClose(
-		&o.fileopsPrograms,
-		&o.fileopsMaps,
+		&o.FileopsPrograms,
+		&o.FileopsMaps,
 	)
 }
 
-// fileopsMaps contains all maps after they have been loaded into the kernel.
+// FileopsMaps contains all maps after they have been loaded into the kernel.
 //
-// It can be passed to loadFileopsObjects or ebpf.CollectionSpec.LoadAndAssign.
-type fileopsMaps struct {
-	FileEvents *ebpf.Map `ebpf:"file_events"`
+// It can be passed to LoadFileopsObjects or ebpf.CollectionSpec.LoadAndAssign.
+type FileopsMaps struct {
+	DiscardComms  *ebpf.Map `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.Map `ebpf:"discard_config"`
+	DiscardPids   *ebpf.Map `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.Map `ebpf:"discard_stats"`
+	FileEvents    *ebpf.Map `ebpf:"file_events"`
+	OpenatContext *ebpf.Map `ebpf:"openat_context"`
 }
 
-func (m *fileopsMaps) Close() error {
+func (m *FileopsMaps) Close() error {
 	return _FileopsClose(
+		m.DiscardComms,
+		m.DiscardConfig,
+		m.DiscardPids,
+		m.DiscardStats,
 		m.FileEvents,
+		m.OpenatContext,
 	)
 }
 
-// fileopsPrograms contains all programs after they have been loaded into the kernel.
+// FileopsPrograms contains all programs after they have been loaded into the kernel.
 //
-// It can be passed to loadFileopsObjects or ebpf.CollectionSpec.LoadAndAssign.
-type fileopsPrograms struct {
-	TracepointSyscallsSysEnterFchmodat  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_fchmodat"`
-	TracepointSyscallsSysEnterOpenat    *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_openat"`
-	TracepointSyscallsSysEnterRenameat2 *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_renameat2"`
-	TracepointSyscallsSysEnterUnlinkat  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_unlinkat"`
+// It can be passed to LoadFileopsObjects or ebpf.CollectionSpec.LoadAndAssign.
+type FileopsPrograms struct {
+	TracepointSyscallsSysEnterChmod          *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_chmod"`
+	TracepointSyscallsSysEnterChown          *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_chown"`
+	TracepointSyscallsSysEnterFchmod         *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_fchmod"`
+	TracepointSyscallsSysEnterFchmodat       *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_fchmodat"`
+	TracepointSyscallsSysEnterFchown         *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_fchown"`
+	TracepointSyscallsSysEnterFchownat       *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_fchownat"`
+	TracepointSyscallsSysEnterFremovexattr   *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_fremovexattr"`
+	TracepointSyscallsSysEnterFsetxattr      *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_fsetxattr"`
+	TracepointSyscallsSysEnterFtruncate      *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_ftruncate"`
+	TracepointSyscallsSysEnterLchown         *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_lchown"`
+	TracepointSyscallsSysEnterLinkat         *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_linkat"`
+	TracepointSyscallsSysEnterLremovexattr   *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_lremovexattr"`
+	TracepointSyscallsSysEnterLsetxattr      *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_lsetxattr"`
+	TracepointSyscallsSysEnterMkdir          *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_mkdir"`
+	TracepointSyscallsSysEnterMkdirat        *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_mkdirat"`
+	TracepointSyscallsSysEnterOpen           *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_open"`
+	TracepointSyscallsSysEnterOpenByHandleAt *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_open_by_handle_at"`
+	TracepointSyscallsSysEnterOpenat         *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_openat"`
+	TracepointSyscallsSysEnterOpenat2        *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_openat2"`
+	TracepointSyscallsSysEnterRemovexattr    *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_removexattr"`
+	TracepointSyscallsSysEnterRename         *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_rename"`
+	TracepointSyscallsSysEnterRenameat       *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_renameat"`
+	TracepointSyscallsSysEnterRenameat2      *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_renameat2"`
+	TracepointSyscallsSysEnterRmdir          *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_rmdir"`
+	TracepointSyscallsSysEnterSetxattr       *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setxattr"`
+	TracepointSyscallsSysEnterSymlinkat      *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_symlinkat"`
+	TracepointSyscallsSysEnterTruncate       *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_truncate"`
+	TracepointSyscallsSysEnterUnlink         *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_unlink"`
+	TracepointSyscallsSysEnterUnlinkat       *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_unlinkat"`
+	TracepointSyscallsSysEnterUtimensat      *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_utimensat"`
+	TracepointSyscallsSysExitOpenat          *ebpf.Program `ebpf:"tracepoint__syscalls__sys_exit_openat"`
 }
 
-func (p *fileopsPrograms) Close() error {
+func (p *FileopsPrograms) Close() error {
 	return _FileopsClose(
+		p.TracepointSyscallsSysEnterChmod,
+		p.TracepointSyscallsSysEnterChown,
+		p.TracepointSyscallsSysEnterFchmod,
 		p.TracepointSyscallsSysEnterFchmodat,
+		p.TracepointSyscallsSysEnterFchown,
+		p.TracepointSyscallsSysEnterFchownat,
+		p.TracepointSyscallsSysEnterFremovexattr,
+		p.TracepointSyscallsSysEnterFsetxattr,
+		p.TracepointSyscallsSysEnterFtruncate,
+		p.TracepointSyscallsSysEnterLchown,
+		p.TracepointSyscallsSysEnterLinkat,
+		p.TracepointSyscallsSysEnterLremovexattr,
+		p.TracepointSyscallsSysEnterLsetxattr,
+		p.TracepointSyscallsSysEnterMkdir,
+		p.TracepointSyscallsSysEnterMkdirat,
+		p.TracepointSyscallsSysEnterOpen,
+		p.TracepointSyscallsSysEnterOpenByHandleAt,
 		p.TracepointSyscallsSysEnterOpenat,
+		p.TracepointSyscallsSysEnterOpenat2,
+		p.TracepointSyscallsSysEnterRemovexattr,
+		p.TracepointSyscallsSysEnterRename,
+		p.TracepointSyscallsSysEnterRenameat,
 		p.TracepointSyscallsSysEnterRenameat2,
+		p.TracepointSyscallsSysEnterRmdir,
+		p.TracepointSyscallsSysEnterSetxattr,
+		p.TracepointSyscallsSysEnterSymlinkat,
+		p.TracepointSyscallsSysEnterTruncate,
+		p.TracepointSyscallsSysEnterUnlink,
 		p.TracepointSyscallsSysEnterUnlinkat,
+		p.TracepointSyscallsSysEnterUtimensat,
+		p.TracepointSyscallsSysExitOpenat,
 	)
 }
 

@@ -22,7 +22,6 @@ type Config struct {
 	AgentID           string
 	AgentName         string
 	AgentToken        string
-	FalcoEnabled      bool
 	Endpoint          string
 	TLSCAFilePath     string
 	TLSInsecure       bool
@@ -80,7 +79,6 @@ var (
 		Verbosity:               3,
 		ForceSmallProgs:         false,
 		ForceLargeProgs:         false,
-		FalcoEnabled:            false,
 		EnableProcessNs:         false,
 		EnableProcessCred:       false,
 		EnablePolicyFilter:      false,

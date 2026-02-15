@@ -47,6 +47,33 @@ typedef __u32 __wsum;
 // Userspace pointer annotation (no-op in BPF context)
 #define __user
 
+// x86_64 pt_regs - required for BPF_KPROBE macro (kprobe programs)
+#if defined(__TARGET_ARCH_x86)
+struct pt_regs {
+    unsigned long r15;
+    unsigned long r14;
+    unsigned long r13;
+    unsigned long r12;
+    unsigned long bp;
+    unsigned long bx;
+    unsigned long r11;
+    unsigned long r10;
+    unsigned long r9;
+    unsigned long r8;
+    unsigned long ax;
+    unsigned long cx;
+    unsigned long dx;
+    unsigned long si;
+    unsigned long di;
+    unsigned long orig_ax;
+    unsigned long ip;
+    unsigned long cs;
+    unsigned long flags;
+    unsigned long sp;
+    unsigned long ss;
+};
+#endif
+
 // Required for BPF helpers
 enum bpf_map_type {
     BPF_MAP_TYPE_UNSPEC = 0,
@@ -111,6 +138,85 @@ struct cred {
     gid_t fsgid;
 };
 
+// String name for dentry
+struct qstr {
+    union {
+        struct {
+            u32 hash;
+            u32 len;
+        };
+        u64 hash_len;
+    };
+    const unsigned char *name;
+};
+
+// Directory entry
+struct dentry {
+    struct qstr d_name;
+    struct dentry *d_parent;
+    struct inode *d_inode;
+};
+
+// Inode struct (used by VFS hooks for file metadata)
+struct inode {
+    unsigned short i_mode;
+    uid_t i_uid;
+    gid_t i_gid;
+    unsigned long i_ino;
+    struct super_block *i_sb;
+};
+
+// VFS mount
+struct vfsmount {
+    struct dentry *mnt_root;
+};
+
+// Rename data (kernel 5.12+)
+struct renamedata {
+    struct inode *old_dir;
+    struct dentry *old_dentry;
+    struct inode *new_dir;
+    struct dentry *new_dentry;
+};
+
+// Path struct
+struct path {
+    struct vfsmount *mnt;
+    struct dentry *dentry;
+};
+
+// File struct
+struct file {
+    struct path f_path;
+    struct inode *f_inode;
+    unsigned int f_flags;
+};
+
+// Memory descriptor
+struct mm_struct {
+    unsigned long arg_start;
+    unsigned long arg_end;
+    unsigned long env_start;
+    unsigned long env_end;
+    struct file *exe_file;
+};
+
+// PID namespace
+struct pid_namespace {
+    struct pid_namespace *parent;
+    unsigned int level;
+};
+
+// Namespace proxy
+struct nsproxy {
+    struct pid_namespace *pid_ns_for_children;
+};
+
+// BPF map update flags
+#define BPF_ANY         0
+#define BPF_NOEXIST     1
+#define BPF_EXIST       2
+
 // Tracepoint context for sys_enter_execve
 // This matches the format of /sys/kernel/debug/tracing/events/syscalls/sys_enter_execve/format
 struct trace_event_raw_sys_enter {
@@ -138,6 +244,40 @@ struct user_pt_regs {
     unsigned long sp;
     unsigned long pc;
     unsigned long pstate;
+};
+
+// Scheduler tracepoint: sched_process_exec
+struct trace_event_raw_sched_process_exec {
+    unsigned short common_type;
+    unsigned char common_flags;
+    unsigned char common_preempt_count;
+    int common_pid;
+    int __data_loc_filename;
+    pid_t pid;
+    pid_t old_pid;
+};
+
+// Scheduler tracepoint: sched_process_exit (and template)
+struct trace_event_raw_sched_process_template {
+    unsigned short common_type;
+    unsigned char common_flags;
+    unsigned char common_preempt_count;
+    int common_pid;
+    char comm[16];
+    pid_t pid;
+    int prio;
+};
+
+// Scheduler tracepoint: sched_process_fork
+struct trace_event_raw_sched_process_fork {
+    unsigned short common_type;
+    unsigned char common_flags;
+    unsigned char common_preempt_count;
+    int common_pid;
+    char parent_comm[16];
+    pid_t parent_pid;
+    char child_comm[16];
+    pid_t child_pid;
 };
 
 #ifndef BPF_NO_PRESERVE_ACCESS_INDEX

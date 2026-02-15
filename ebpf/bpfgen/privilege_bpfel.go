@@ -12,7 +12,20 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type privilegePrivilegeEvent struct {
+type PrivilegePrivCtx struct {
+	EventType uint32
+	Pid       uint32
+	Ppid      uint32
+	Uid       uint32
+	Gid       uint32
+	Comm      [16]int8
+	NewUid    uint32
+	NewGid    uint32
+	NewEuid   uint32
+	NewEgid   uint32
+}
+
+type PrivilegePrivilegeEvent struct {
 	TimestampNs uint64
 	EventType   uint32
 	Pid         uint32
@@ -27,28 +40,28 @@ type privilegePrivilegeEvent struct {
 	RetCode     int32
 }
 
-// loadPrivilege returns the embedded CollectionSpec for privilege.
-func loadPrivilege() (*ebpf.CollectionSpec, error) {
+// LoadPrivilege returns the embedded CollectionSpec for Privilege.
+func LoadPrivilege() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_PrivilegeBytes)
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
 	if err != nil {
-		return nil, fmt.Errorf("can't load privilege: %w", err)
+		return nil, fmt.Errorf("can't load Privilege: %w", err)
 	}
 
 	return spec, err
 }
 
-// loadPrivilegeObjects loads privilege and converts it into a struct.
+// LoadPrivilegeObjects loads Privilege and converts it into a struct.
 //
 // The following types are suitable as obj argument:
 //
-//	*privilegeObjects
-//	*privilegePrograms
-//	*privilegeMaps
+//	*PrivilegeObjects
+//	*PrivilegePrograms
+//	*PrivilegeMaps
 //
 // See ebpf.CollectionSpec.LoadAndAssign documentation for details.
-func loadPrivilegeObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
-	spec, err := loadPrivilege()
+func LoadPrivilegeObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
+	spec, err := LoadPrivilege()
 	if err != nil {
 		return err
 	}
@@ -56,75 +69,114 @@ func loadPrivilegeObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	return spec.LoadAndAssign(obj, opts)
 }
 
-// privilegeSpecs contains maps and programs before they are loaded into the kernel.
+// PrivilegeSpecs contains maps and programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type privilegeSpecs struct {
-	privilegeProgramSpecs
-	privilegeMapSpecs
+type PrivilegeSpecs struct {
+	PrivilegeProgramSpecs
+	PrivilegeMapSpecs
 }
 
-// privilegeSpecs contains programs before they are loaded into the kernel.
+// PrivilegeSpecs contains programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type privilegeProgramSpecs struct {
-	TracepointSyscallsSysEnterSetgid   *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setgid"`
-	TracepointSyscallsSysEnterSetregid *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setregid"`
-	TracepointSyscallsSysEnterSetreuid *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setreuid"`
-	TracepointSyscallsSysEnterSetuid   *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setuid"`
+type PrivilegeProgramSpecs struct {
+	TracepointSyscallsSysEnterSetfsgid  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setfsgid"`
+	TracepointSyscallsSysEnterSetfsuid  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setfsuid"`
+	TracepointSyscallsSysEnterSetgid    *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setgid"`
+	TracepointSyscallsSysEnterSetregid  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setregid"`
+	TracepointSyscallsSysEnterSetresgid *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setresgid"`
+	TracepointSyscallsSysEnterSetresuid *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setresuid"`
+	TracepointSyscallsSysEnterSetreuid  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setreuid"`
+	TracepointSyscallsSysEnterSetuid    *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_setuid"`
+	TracepointSyscallsSysExitSetgid     *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_exit_setgid"`
+	TracepointSyscallsSysExitSetregid   *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_exit_setregid"`
+	TracepointSyscallsSysExitSetreuid   *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_exit_setreuid"`
+	TracepointSyscallsSysExitSetuid     *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_exit_setuid"`
 }
 
-// privilegeMapSpecs contains maps before they are loaded into the kernel.
+// PrivilegeMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type privilegeMapSpecs struct {
+type PrivilegeMapSpecs struct {
+	DiscardComms    *ebpf.MapSpec `ebpf:"discard_comms"`
+	DiscardConfig   *ebpf.MapSpec `ebpf:"discard_config"`
+	DiscardPids     *ebpf.MapSpec `ebpf:"discard_pids"`
+	DiscardStats    *ebpf.MapSpec `ebpf:"discard_stats"`
+	PrivContext     *ebpf.MapSpec `ebpf:"priv_context"`
 	PrivilegeEvents *ebpf.MapSpec `ebpf:"privilege_events"`
 }
 
-// privilegeObjects contains all objects after they have been loaded into the kernel.
+// PrivilegeObjects contains all objects after they have been loaded into the kernel.
 //
-// It can be passed to loadPrivilegeObjects or ebpf.CollectionSpec.LoadAndAssign.
-type privilegeObjects struct {
-	privilegePrograms
-	privilegeMaps
+// It can be passed to LoadPrivilegeObjects or ebpf.CollectionSpec.LoadAndAssign.
+type PrivilegeObjects struct {
+	PrivilegePrograms
+	PrivilegeMaps
 }
 
-func (o *privilegeObjects) Close() error {
+func (o *PrivilegeObjects) Close() error {
 	return _PrivilegeClose(
-		&o.privilegePrograms,
-		&o.privilegeMaps,
+		&o.PrivilegePrograms,
+		&o.PrivilegeMaps,
 	)
 }
 
-// privilegeMaps contains all maps after they have been loaded into the kernel.
+// PrivilegeMaps contains all maps after they have been loaded into the kernel.
 //
-// It can be passed to loadPrivilegeObjects or ebpf.CollectionSpec.LoadAndAssign.
-type privilegeMaps struct {
+// It can be passed to LoadPrivilegeObjects or ebpf.CollectionSpec.LoadAndAssign.
+type PrivilegeMaps struct {
+	DiscardComms    *ebpf.Map `ebpf:"discard_comms"`
+	DiscardConfig   *ebpf.Map `ebpf:"discard_config"`
+	DiscardPids     *ebpf.Map `ebpf:"discard_pids"`
+	DiscardStats    *ebpf.Map `ebpf:"discard_stats"`
+	PrivContext     *ebpf.Map `ebpf:"priv_context"`
 	PrivilegeEvents *ebpf.Map `ebpf:"privilege_events"`
 }
 
-func (m *privilegeMaps) Close() error {
+func (m *PrivilegeMaps) Close() error {
 	return _PrivilegeClose(
+		m.DiscardComms,
+		m.DiscardConfig,
+		m.DiscardPids,
+		m.DiscardStats,
+		m.PrivContext,
 		m.PrivilegeEvents,
 	)
 }
 
-// privilegePrograms contains all programs after they have been loaded into the kernel.
+// PrivilegePrograms contains all programs after they have been loaded into the kernel.
 //
-// It can be passed to loadPrivilegeObjects or ebpf.CollectionSpec.LoadAndAssign.
-type privilegePrograms struct {
-	TracepointSyscallsSysEnterSetgid   *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setgid"`
-	TracepointSyscallsSysEnterSetregid *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setregid"`
-	TracepointSyscallsSysEnterSetreuid *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setreuid"`
-	TracepointSyscallsSysEnterSetuid   *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setuid"`
+// It can be passed to LoadPrivilegeObjects or ebpf.CollectionSpec.LoadAndAssign.
+type PrivilegePrograms struct {
+	TracepointSyscallsSysEnterSetfsgid  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setfsgid"`
+	TracepointSyscallsSysEnterSetfsuid  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setfsuid"`
+	TracepointSyscallsSysEnterSetgid    *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setgid"`
+	TracepointSyscallsSysEnterSetregid  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setregid"`
+	TracepointSyscallsSysEnterSetresgid *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setresgid"`
+	TracepointSyscallsSysEnterSetresuid *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setresuid"`
+	TracepointSyscallsSysEnterSetreuid  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setreuid"`
+	TracepointSyscallsSysEnterSetuid    *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_setuid"`
+	TracepointSyscallsSysExitSetgid     *ebpf.Program `ebpf:"tracepoint__syscalls__sys_exit_setgid"`
+	TracepointSyscallsSysExitSetregid   *ebpf.Program `ebpf:"tracepoint__syscalls__sys_exit_setregid"`
+	TracepointSyscallsSysExitSetreuid   *ebpf.Program `ebpf:"tracepoint__syscalls__sys_exit_setreuid"`
+	TracepointSyscallsSysExitSetuid     *ebpf.Program `ebpf:"tracepoint__syscalls__sys_exit_setuid"`
 }
 
-func (p *privilegePrograms) Close() error {
+func (p *PrivilegePrograms) Close() error {
 	return _PrivilegeClose(
+		p.TracepointSyscallsSysEnterSetfsgid,
+		p.TracepointSyscallsSysEnterSetfsuid,
 		p.TracepointSyscallsSysEnterSetgid,
 		p.TracepointSyscallsSysEnterSetregid,
+		p.TracepointSyscallsSysEnterSetresgid,
+		p.TracepointSyscallsSysEnterSetresuid,
 		p.TracepointSyscallsSysEnterSetreuid,
 		p.TracepointSyscallsSysEnterSetuid,
+		p.TracepointSyscallsSysExitSetgid,
+		p.TracepointSyscallsSysExitSetregid,
+		p.TracepointSyscallsSysExitSetreuid,
+		p.TracepointSyscallsSysExitSetuid,
 	)
 }
 

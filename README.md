@@ -1,22 +1,35 @@
 # AlertPriority Agent
 
-A lightweight, high-performance monitoring agent for Linux systems. The AlertPriority Agent collects system metrics, monitors services, and integrates with Falco for security event detection.
+A lightweight, high-performance security monitoring agent for Linux systems using native eBPF technology. The AlertPriority Agent captures system events using eBPF probes and ships them to the AlertPriority platform for analysis.
+
+## Architecture
+
+This agent follows an **open-core architecture**:
+- **Agent (Open Source)**: Captures and enriches raw events using native eBPF
+- **Backend (Proprietary)**: Provides intelligence - compliance tagging, LLM analysis, alert rules
+
+The agent captures events and enriches them with process/container context. All compliance logic, alert rules, and threat analysis happen in the AlertPriority backend.
 
 ## Features
 
-- **System Metrics Collection**: CPU usage, memory utilization, load averages
-- **Service Monitoring**: Track systemd services and listening ports
-- **Package Inventory**: Monitor installed packages across your infrastructure
-- **Falco Integration**: Real-time security event monitoring with Falco support
-- **Secure Communication**: TLS-encrypted communication with the AlertPriority platform
-- **Lightweight**: Minimal resource footprint with efficient metric collection
+- **Native eBPF Security Monitoring**: Real-time kernel-level event capture
+- **Process Events**: execve, process lifecycle, privilege changes
+- **File Events**: File access, modifications, deletions
+- **Network Events**: Connection attempts, DNS lookups
+- **Privilege Events**: setuid, setgid, capability changes
+- **Kernel Events**: Module loading, kernel parameter changes
+- **Memory Events**: Executable memory regions (W+X)
+- **Event Enrichment**: Full process context, container detection, parent chain
+- **Secure Communication**: TLS-encrypted communication with AlertPriority platform
+- **Lightweight**: Minimal resource footprint with efficient eBPF-based collection
 
 ## Requirements
 
-- Linux kernel 4.16 or later
+- Linux kernel 5.8 or later (for BPF CO-RE support)
 - Go 1.21 or later (for building from source)
 - CMake 2.8.12 or later (for packaging)
 - systemd (for service management)
+- Root/CAP_BPF privileges (for loading eBPF programs)
 
 ## Quick Start
 
@@ -39,7 +52,7 @@ sudo rpm -i alertpriority-agent-*.rpm
 git clone https://github.com/alertpriority/apagent.git
 cd apagent
 
-# Build the agent
+# Build the agent (includes eBPF programs)
 make build
 
 # The binary will be available at build/alertpriority-agent
@@ -50,10 +63,10 @@ make build
 1. **Create a configuration file:**
 
 ```bash
-sudo mkdir -p /etc/alertpriority
-sudo cp alertpriority-agent.conf.example /etc/alertpriority/alertpriority-agent.conf
+sudo mkdir -p /etc/alertpriority-agent
+sudo cp alertpriority-agent.conf.example /etc/alertpriority-agent/alertpriority-agent.conf
 # Edit the configuration with your agent credentials
-sudo nano /etc/alertpriority/alertpriority-agent.conf
+sudo nano /etc/alertpriority-agent/alertpriority-agent.conf
 ```
 
 2. **Start the agent:**
@@ -69,7 +82,7 @@ sudo /usr/bin/alertpriority-agent
 
 ## Configuration
 
-The agent configuration file is located at `/etc/alertpriority/alertpriority-agent.conf`. Example configuration:
+The agent configuration file is located at `/etc/alertpriority-agent/alertpriority-agent.conf`. Example configuration:
 
 ```json
 {
@@ -79,7 +92,6 @@ The agent configuration file is located at `/etc/alertpriority/alertpriority-age
   "AgentName": "my-server",
   "Subdomain": "your-subdomain",
   "Endpoint": "monit.alertpriority.com:8484",
-  "FalcoEnabled": false,
   "TLSInsecure": false
 }
 ```
@@ -94,7 +106,6 @@ The agent configuration file is located at `/etc/alertpriority/alertpriority-age
 | `AgentName` | Human-readable name for this host | Optional |
 | `Subdomain` | Your AlertPriority subdomain | Required |
 | `Endpoint` | AlertPriority server endpoint | `monit.alertpriority.com:8484` |
-| `FalcoEnabled` | Enable Falco security event monitoring | `false` |
 | `TLSInsecure` | Skip TLS certificate verification | `false` |
 | `TLSCAFilePath` | Path to additional CA certificate | Optional |
 
@@ -133,6 +144,18 @@ make package
 ```
 .
 ├── agent/              # Core agent logic and server communication
+├── ebpf/               # Native eBPF implementation
+│   ├── native.go       # Main eBPF agent
+│   ├── events.go       # Event types and handling
+│   ├── enrichment.go   # Process/container enrichment
+│   └── probes/         # eBPF C programs
+│       ├── common.h
+│       ├── process.bpf.c
+│       ├── file.bpf.c
+│       ├── network.bpf.c
+│       ├── privilege.bpf.c
+│       ├── kernel.bpf.c
+│       └── memory.bpf.c
 ├── checker/            # Check execution and scheduling
 ├── checks/             # Individual monitoring checks
 │   ├── cpu/            # CPU usage monitoring
@@ -144,7 +167,6 @@ make package
 ├── client/             # TLS connection and RPC client
 ├── cmd/                # Main application entry point
 ├── config/             # Configuration management
-├── falco_manager/      # Falco integration
 ├── internal/           # Internal packages
 │   ├── api/            # API types and interfaces
 │   └── systemd/        # systemd integration
@@ -152,6 +174,19 @@ make package
 ├── proc/               # /proc filesystem utilities
 └── certs/              # TLS certificates
 ```
+
+### Event Categories
+
+The agent captures the following event categories:
+
+| Category | Description | eBPF Probes |
+|----------|-------------|-------------|
+| `process` | Process execution, lifecycle | execve, exit, fork |
+| `file` | File operations | openat, unlinkat, renameat |
+| `network` | Network connections | connect, accept, bind |
+| `privilege` | Privilege changes | setuid, setgid, capset |
+| `kernel` | Kernel modifications | init_module, finit_module |
+| `memory` | Memory protection | mprotect (W+X detection) |
 
 ### Running Tests
 
@@ -169,19 +204,17 @@ make tidy
 make audit
 ```
 
-## Falco Integration
+## Event Flow
 
-The agent supports integration with [Falco](https://falco.org/) for runtime security monitoring. When enabled, the agent:
+```
+Kernel (eBPF) → Agent (Enrichment) → Endpoint (Gateway) → Kafka → API (Intelligence)
+```
 
-1. Configures Falco to send events via HTTP
-2. Receives and forwards security events to AlertPriority
-3. Manages Falco rule files in `/etc/falco/rules.alertpriority/`
-
-To enable Falco integration:
-
-1. Install Falco on your system
-2. Set `FalcoEnabled: true` in the agent configuration
-3. Restart the agent
+1. **eBPF probes** capture raw syscall events in kernel
+2. **Agent** enriches events with process context (args, cwd, container info)
+3. **Agent** waits for process end to capture full context (like Tetragon)
+4. **Endpoint** receives events and pushes to Kafka
+5. **API** applies compliance tags, runs LLM analysis, creates alerts
 
 ## Troubleshooting
 
@@ -205,6 +238,16 @@ Run the agent with debug output:
 sudo /usr/bin/alertpriority-agent -debug
 ```
 
+### Check eBPF Programs
+
+```bash
+# List loaded BPF programs
+sudo bpftool prog list | grep alertpriority
+
+# Check ring buffer
+sudo bpftool map list | grep events
+```
+
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE.txt](LICENSE.txt) file for details.
@@ -212,4 +255,3 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE.txt](LI
 ## Support
 
 For support and documentation, visit [https://alertpriority.com/docs](https://alertpriority.com/docs)
-

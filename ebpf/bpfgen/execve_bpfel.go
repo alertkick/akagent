@@ -12,7 +12,9 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type execveExecveEvent struct {
+type ExecveExecveCtx struct{ Active uint8 }
+
+type ExecveExecveEvent struct {
 	TimestampNs uint64
 	Pid         uint32
 	Ppid        uint32
@@ -25,28 +27,28 @@ type execveExecveEvent struct {
 	RetCode     uint32
 }
 
-// loadExecve returns the embedded CollectionSpec for execve.
-func loadExecve() (*ebpf.CollectionSpec, error) {
+// LoadExecve returns the embedded CollectionSpec for Execve.
+func LoadExecve() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_ExecveBytes)
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
 	if err != nil {
-		return nil, fmt.Errorf("can't load execve: %w", err)
+		return nil, fmt.Errorf("can't load Execve: %w", err)
 	}
 
 	return spec, err
 }
 
-// loadExecveObjects loads execve and converts it into a struct.
+// LoadExecveObjects loads Execve and converts it into a struct.
 //
 // The following types are suitable as obj argument:
 //
-//	*execveObjects
-//	*execvePrograms
-//	*execveMaps
+//	*ExecveObjects
+//	*ExecvePrograms
+//	*ExecveMaps
 //
 // See ebpf.CollectionSpec.LoadAndAssign documentation for details.
-func loadExecveObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
-	spec, err := loadExecve()
+func LoadExecveObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
+	spec, err := LoadExecve()
 	if err != nil {
 		return err
 	}
@@ -54,66 +56,84 @@ func loadExecveObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	return spec.LoadAndAssign(obj, opts)
 }
 
-// execveSpecs contains maps and programs before they are loaded into the kernel.
+// ExecveSpecs contains maps and programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type execveSpecs struct {
-	execveProgramSpecs
-	execveMapSpecs
+type ExecveSpecs struct {
+	ExecveProgramSpecs
+	ExecveMapSpecs
 }
 
-// execveSpecs contains programs before they are loaded into the kernel.
+// ExecveSpecs contains programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type execveProgramSpecs struct {
+type ExecveProgramSpecs struct {
 	TracepointSyscallsSysEnterExecve *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_execve"`
+	TracepointSyscallsSysExitExecve  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_exit_execve"`
 }
 
-// execveMapSpecs contains maps before they are loaded into the kernel.
+// ExecveMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type execveMapSpecs struct {
-	Events *ebpf.MapSpec `ebpf:"events"`
+type ExecveMapSpecs struct {
+	DiscardComms  *ebpf.MapSpec `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.MapSpec `ebpf:"discard_config"`
+	DiscardPids   *ebpf.MapSpec `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.MapSpec `ebpf:"discard_stats"`
+	Events        *ebpf.MapSpec `ebpf:"events"`
+	ExecveContext *ebpf.MapSpec `ebpf:"execve_context"`
 }
 
-// execveObjects contains all objects after they have been loaded into the kernel.
+// ExecveObjects contains all objects after they have been loaded into the kernel.
 //
-// It can be passed to loadExecveObjects or ebpf.CollectionSpec.LoadAndAssign.
-type execveObjects struct {
-	execvePrograms
-	execveMaps
+// It can be passed to LoadExecveObjects or ebpf.CollectionSpec.LoadAndAssign.
+type ExecveObjects struct {
+	ExecvePrograms
+	ExecveMaps
 }
 
-func (o *execveObjects) Close() error {
+func (o *ExecveObjects) Close() error {
 	return _ExecveClose(
-		&o.execvePrograms,
-		&o.execveMaps,
+		&o.ExecvePrograms,
+		&o.ExecveMaps,
 	)
 }
 
-// execveMaps contains all maps after they have been loaded into the kernel.
+// ExecveMaps contains all maps after they have been loaded into the kernel.
 //
-// It can be passed to loadExecveObjects or ebpf.CollectionSpec.LoadAndAssign.
-type execveMaps struct {
-	Events *ebpf.Map `ebpf:"events"`
+// It can be passed to LoadExecveObjects or ebpf.CollectionSpec.LoadAndAssign.
+type ExecveMaps struct {
+	DiscardComms  *ebpf.Map `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.Map `ebpf:"discard_config"`
+	DiscardPids   *ebpf.Map `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.Map `ebpf:"discard_stats"`
+	Events        *ebpf.Map `ebpf:"events"`
+	ExecveContext *ebpf.Map `ebpf:"execve_context"`
 }
 
-func (m *execveMaps) Close() error {
+func (m *ExecveMaps) Close() error {
 	return _ExecveClose(
+		m.DiscardComms,
+		m.DiscardConfig,
+		m.DiscardPids,
+		m.DiscardStats,
 		m.Events,
+		m.ExecveContext,
 	)
 }
 
-// execvePrograms contains all programs after they have been loaded into the kernel.
+// ExecvePrograms contains all programs after they have been loaded into the kernel.
 //
-// It can be passed to loadExecveObjects or ebpf.CollectionSpec.LoadAndAssign.
-type execvePrograms struct {
+// It can be passed to LoadExecveObjects or ebpf.CollectionSpec.LoadAndAssign.
+type ExecvePrograms struct {
 	TracepointSyscallsSysEnterExecve *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_execve"`
+	TracepointSyscallsSysExitExecve  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_exit_execve"`
 }
 
-func (p *execvePrograms) Close() error {
+func (p *ExecvePrograms) Close() error {
 	return _ExecveClose(
 		p.TracepointSyscallsSysEnterExecve,
+		p.TracepointSyscallsSysExitExecve,
 	)
 }
 

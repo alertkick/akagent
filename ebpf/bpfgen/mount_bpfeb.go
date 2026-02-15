@@ -12,7 +12,19 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type mountMountEvent struct {
+type MountMountCtx struct {
+	Pid    uint32
+	Ppid   uint32
+	Uid    uint32
+	Gid    uint32
+	Comm   [16]int8
+	Source [256]int8
+	Target [256]int8
+	Fstype [32]int8
+	Flags  uint64
+}
+
+type MountMountEvent struct {
 	TimestampNs uint64
 	EventType   uint32
 	Pid         uint32
@@ -29,28 +41,28 @@ type mountMountEvent struct {
 	_           [4]byte
 }
 
-// loadMount returns the embedded CollectionSpec for mount.
-func loadMount() (*ebpf.CollectionSpec, error) {
+// LoadMount returns the embedded CollectionSpec for Mount.
+func LoadMount() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_MountBytes)
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
 	if err != nil {
-		return nil, fmt.Errorf("can't load mount: %w", err)
+		return nil, fmt.Errorf("can't load Mount: %w", err)
 	}
 
 	return spec, err
 }
 
-// loadMountObjects loads mount and converts it into a struct.
+// LoadMountObjects loads Mount and converts it into a struct.
 //
 // The following types are suitable as obj argument:
 //
-//	*mountObjects
-//	*mountPrograms
-//	*mountMaps
+//	*MountObjects
+//	*MountPrograms
+//	*MountMaps
 //
 // See ebpf.CollectionSpec.LoadAndAssign documentation for details.
-func loadMountObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
-	spec, err := loadMount()
+func LoadMountObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
+	spec, err := LoadMount()
 	if err != nil {
 		return err
 	}
@@ -58,69 +70,87 @@ func loadMountObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	return spec.LoadAndAssign(obj, opts)
 }
 
-// mountSpecs contains maps and programs before they are loaded into the kernel.
+// MountSpecs contains maps and programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type mountSpecs struct {
-	mountProgramSpecs
-	mountMapSpecs
+type MountSpecs struct {
+	MountProgramSpecs
+	MountMapSpecs
 }
 
-// mountSpecs contains programs before they are loaded into the kernel.
+// MountSpecs contains programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type mountProgramSpecs struct {
+type MountProgramSpecs struct {
 	TracepointSyscallsSysEnterMount  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_mount"`
 	TracepointSyscallsSysEnterUmount *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_umount"`
+	TracepointSyscallsSysExitMount   *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_exit_mount"`
 }
 
-// mountMapSpecs contains maps before they are loaded into the kernel.
+// MountMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type mountMapSpecs struct {
-	MountEvents *ebpf.MapSpec `ebpf:"mount_events"`
+type MountMapSpecs struct {
+	DiscardComms  *ebpf.MapSpec `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.MapSpec `ebpf:"discard_config"`
+	DiscardPids   *ebpf.MapSpec `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.MapSpec `ebpf:"discard_stats"`
+	MountContext  *ebpf.MapSpec `ebpf:"mount_context"`
+	MountEvents   *ebpf.MapSpec `ebpf:"mount_events"`
 }
 
-// mountObjects contains all objects after they have been loaded into the kernel.
+// MountObjects contains all objects after they have been loaded into the kernel.
 //
-// It can be passed to loadMountObjects or ebpf.CollectionSpec.LoadAndAssign.
-type mountObjects struct {
-	mountPrograms
-	mountMaps
+// It can be passed to LoadMountObjects or ebpf.CollectionSpec.LoadAndAssign.
+type MountObjects struct {
+	MountPrograms
+	MountMaps
 }
 
-func (o *mountObjects) Close() error {
+func (o *MountObjects) Close() error {
 	return _MountClose(
-		&o.mountPrograms,
-		&o.mountMaps,
+		&o.MountPrograms,
+		&o.MountMaps,
 	)
 }
 
-// mountMaps contains all maps after they have been loaded into the kernel.
+// MountMaps contains all maps after they have been loaded into the kernel.
 //
-// It can be passed to loadMountObjects or ebpf.CollectionSpec.LoadAndAssign.
-type mountMaps struct {
-	MountEvents *ebpf.Map `ebpf:"mount_events"`
+// It can be passed to LoadMountObjects or ebpf.CollectionSpec.LoadAndAssign.
+type MountMaps struct {
+	DiscardComms  *ebpf.Map `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.Map `ebpf:"discard_config"`
+	DiscardPids   *ebpf.Map `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.Map `ebpf:"discard_stats"`
+	MountContext  *ebpf.Map `ebpf:"mount_context"`
+	MountEvents   *ebpf.Map `ebpf:"mount_events"`
 }
 
-func (m *mountMaps) Close() error {
+func (m *MountMaps) Close() error {
 	return _MountClose(
+		m.DiscardComms,
+		m.DiscardConfig,
+		m.DiscardPids,
+		m.DiscardStats,
+		m.MountContext,
 		m.MountEvents,
 	)
 }
 
-// mountPrograms contains all programs after they have been loaded into the kernel.
+// MountPrograms contains all programs after they have been loaded into the kernel.
 //
-// It can be passed to loadMountObjects or ebpf.CollectionSpec.LoadAndAssign.
-type mountPrograms struct {
+// It can be passed to LoadMountObjects or ebpf.CollectionSpec.LoadAndAssign.
+type MountPrograms struct {
 	TracepointSyscallsSysEnterMount  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_mount"`
 	TracepointSyscallsSysEnterUmount *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_umount"`
+	TracepointSyscallsSysExitMount   *ebpf.Program `ebpf:"tracepoint__syscalls__sys_exit_mount"`
 }
 
-func (p *mountPrograms) Close() error {
+func (p *MountPrograms) Close() error {
 	return _MountClose(
 		p.TracepointSyscallsSysEnterMount,
 		p.TracepointSyscallsSysEnterUmount,
+		p.TracepointSyscallsSysExitMount,
 	)
 }
 

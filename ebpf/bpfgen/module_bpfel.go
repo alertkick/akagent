@@ -12,7 +12,21 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type moduleModuleEvent struct {
+type ModuleModuleCtx struct {
+	EventType  uint32
+	Pid        uint32
+	Ppid       uint32
+	Uid        uint32
+	Gid        uint32
+	Comm       [16]int8
+	ModuleName [64]int8
+	_          [4]byte
+	ModuleSize uint64
+	Flags      int32
+	_          [4]byte
+}
+
+type ModuleModuleEvent struct {
 	TimestampNs uint64
 	EventType   uint32
 	Pid         uint32
@@ -27,28 +41,28 @@ type moduleModuleEvent struct {
 	RetCode     int32
 }
 
-// loadModule returns the embedded CollectionSpec for module.
-func loadModule() (*ebpf.CollectionSpec, error) {
+// LoadModule returns the embedded CollectionSpec for Module.
+func LoadModule() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_ModuleBytes)
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
 	if err != nil {
-		return nil, fmt.Errorf("can't load module: %w", err)
+		return nil, fmt.Errorf("can't load Module: %w", err)
 	}
 
 	return spec, err
 }
 
-// loadModuleObjects loads module and converts it into a struct.
+// LoadModuleObjects loads Module and converts it into a struct.
 //
 // The following types are suitable as obj argument:
 //
-//	*moduleObjects
-//	*modulePrograms
-//	*moduleMaps
+//	*ModuleObjects
+//	*ModulePrograms
+//	*ModuleMaps
 //
 // See ebpf.CollectionSpec.LoadAndAssign documentation for details.
-func loadModuleObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
-	spec, err := loadModule()
+func LoadModuleObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
+	spec, err := LoadModule()
 	if err != nil {
 		return err
 	}
@@ -56,72 +70,93 @@ func loadModuleObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	return spec.LoadAndAssign(obj, opts)
 }
 
-// moduleSpecs contains maps and programs before they are loaded into the kernel.
+// ModuleSpecs contains maps and programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type moduleSpecs struct {
-	moduleProgramSpecs
-	moduleMapSpecs
+type ModuleSpecs struct {
+	ModuleProgramSpecs
+	ModuleMapSpecs
 }
 
-// moduleSpecs contains programs before they are loaded into the kernel.
+// ModuleSpecs contains programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type moduleProgramSpecs struct {
+type ModuleProgramSpecs struct {
 	TracepointSyscallsSysEnterDeleteModule *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_delete_module"`
 	TracepointSyscallsSysEnterFinitModule  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_finit_module"`
 	TracepointSyscallsSysEnterInitModule   *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_init_module"`
+	TracepointSyscallsSysExitFinitModule   *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_exit_finit_module"`
+	TracepointSyscallsSysExitInitModule    *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_exit_init_module"`
 }
 
-// moduleMapSpecs contains maps before they are loaded into the kernel.
+// ModuleMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type moduleMapSpecs struct {
-	ModuleEvents *ebpf.MapSpec `ebpf:"module_events"`
+type ModuleMapSpecs struct {
+	DiscardComms  *ebpf.MapSpec `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.MapSpec `ebpf:"discard_config"`
+	DiscardPids   *ebpf.MapSpec `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.MapSpec `ebpf:"discard_stats"`
+	ModuleContext *ebpf.MapSpec `ebpf:"module_context"`
+	ModuleEvents  *ebpf.MapSpec `ebpf:"module_events"`
 }
 
-// moduleObjects contains all objects after they have been loaded into the kernel.
+// ModuleObjects contains all objects after they have been loaded into the kernel.
 //
-// It can be passed to loadModuleObjects or ebpf.CollectionSpec.LoadAndAssign.
-type moduleObjects struct {
-	modulePrograms
-	moduleMaps
+// It can be passed to LoadModuleObjects or ebpf.CollectionSpec.LoadAndAssign.
+type ModuleObjects struct {
+	ModulePrograms
+	ModuleMaps
 }
 
-func (o *moduleObjects) Close() error {
+func (o *ModuleObjects) Close() error {
 	return _ModuleClose(
-		&o.modulePrograms,
-		&o.moduleMaps,
+		&o.ModulePrograms,
+		&o.ModuleMaps,
 	)
 }
 
-// moduleMaps contains all maps after they have been loaded into the kernel.
+// ModuleMaps contains all maps after they have been loaded into the kernel.
 //
-// It can be passed to loadModuleObjects or ebpf.CollectionSpec.LoadAndAssign.
-type moduleMaps struct {
-	ModuleEvents *ebpf.Map `ebpf:"module_events"`
+// It can be passed to LoadModuleObjects or ebpf.CollectionSpec.LoadAndAssign.
+type ModuleMaps struct {
+	DiscardComms  *ebpf.Map `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.Map `ebpf:"discard_config"`
+	DiscardPids   *ebpf.Map `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.Map `ebpf:"discard_stats"`
+	ModuleContext *ebpf.Map `ebpf:"module_context"`
+	ModuleEvents  *ebpf.Map `ebpf:"module_events"`
 }
 
-func (m *moduleMaps) Close() error {
+func (m *ModuleMaps) Close() error {
 	return _ModuleClose(
+		m.DiscardComms,
+		m.DiscardConfig,
+		m.DiscardPids,
+		m.DiscardStats,
+		m.ModuleContext,
 		m.ModuleEvents,
 	)
 }
 
-// modulePrograms contains all programs after they have been loaded into the kernel.
+// ModulePrograms contains all programs after they have been loaded into the kernel.
 //
-// It can be passed to loadModuleObjects or ebpf.CollectionSpec.LoadAndAssign.
-type modulePrograms struct {
+// It can be passed to LoadModuleObjects or ebpf.CollectionSpec.LoadAndAssign.
+type ModulePrograms struct {
 	TracepointSyscallsSysEnterDeleteModule *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_delete_module"`
 	TracepointSyscallsSysEnterFinitModule  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_finit_module"`
 	TracepointSyscallsSysEnterInitModule   *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_init_module"`
+	TracepointSyscallsSysExitFinitModule   *ebpf.Program `ebpf:"tracepoint__syscalls__sys_exit_finit_module"`
+	TracepointSyscallsSysExitInitModule    *ebpf.Program `ebpf:"tracepoint__syscalls__sys_exit_init_module"`
 }
 
-func (p *modulePrograms) Close() error {
+func (p *ModulePrograms) Close() error {
 	return _ModuleClose(
 		p.TracepointSyscallsSysEnterDeleteModule,
 		p.TracepointSyscallsSysEnterFinitModule,
 		p.TracepointSyscallsSysEnterInitModule,
+		p.TracepointSyscallsSysExitFinitModule,
+		p.TracepointSyscallsSysExitInitModule,
 	)
 }
 

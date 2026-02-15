@@ -96,8 +96,10 @@ type ProcessInfo struct {
 	LoginUID    int    `json:"login_uid,omitempty"`
 	TTY         int    `json:"tty,omitempty"`
 	ParentName  string `json:"parent_name,omitempty"`
-	ParentExe   string `json:"parent_exe,omitempty"`
-	Cwd         string `json:"cwd,omitempty"`
+	ParentExe       string `json:"parent_exe,omitempty"`
+	GrandparentPID  int    `json:"grandparent_pid,omitempty"`
+	GrandparentName string `json:"grandparent_name,omitempty"`
+	Cwd             string `json:"cwd,omitempty"`
 	Capabilities string `json:"capabilities,omitempty"`
 }
 
@@ -185,6 +187,12 @@ type SecurityEvent struct {
 
 	// Original data preserved for debugging
 	RawFields map[string]interface{} `json:"raw_fields,omitempty"`
+
+	// Deduplication fields (populated by agent when count > 1)
+	AggregatedCount int        `json:"aggregated_count,omitempty"`
+	FirstOccurrence *time.Time `json:"first_occurrence,omitempty"`
+	LastOccurrence  *time.Time `json:"last_occurrence,omitempty"`
+
 }
 
 // String returns a JSON string representation of the event
@@ -238,6 +246,12 @@ func (e SecurityEvent) HasNetworkContext() bool {
 // HasFileContext returns true if the event has file information
 func (e SecurityEvent) HasFileContext() bool {
 	return e.File.Path != "" || e.File.Name != ""
+}
+
+// DeduplicationKey returns a string key for grouping duplicate events.
+// Events with the same rule and process name/parent pattern are considered duplicates.
+func (e SecurityEvent) DeduplicationKey() string {
+	return e.Rule + "|" + e.Process.Name + "|" + e.Process.ParentName
 }
 
 // EventBuffer provides a thread-safe buffer for events

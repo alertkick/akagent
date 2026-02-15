@@ -350,36 +350,9 @@ func (c *Connection) CheckResultsPost(msg CheckResultsPost) error {
 	return nil
 }
 
-func (c *Connection) FalcoEventsPost(msg FalcoEventsPost) error {
-	if logger.IsSectionEnabled(logger.SectionFalco) {
-		c.log.Debug().Msgf("Connection.FalcoEventsPost: ID: %s, method: %s", msg.ID, msg.Method)
-	}
-	if c.State() != StateConnected {
-		return errors.New("not connected")
-	}
-
-	jsonData, err := json.Marshal(msg)
-	if err != nil {
-		c.log.Err(err).Msg("Connection.FalcoEventsPost - Error marshalling FalcoEventsPost")
-		return err
-	}
-
-	if logger.VerboseLevel > 0 && logger.IsSectionEnabled(logger.SectionFalco) {
-		c.log.Debug().Str("data", logger.FormatBytes(jsonData)).Msg("FalcoEventsPost - Sending")
-	}
-
-	_, err = c.conn.Write(jsonData)
-	if err != nil {
-		c.log.Err(err).Msg("Connection.FalcoEventsPost - Error sending FalcoEventsPost")
-		return err
-	}
-
-	return nil
-}
-
-// SecurityEventsPost sends a unified security event from any eBPF agent
+// SecurityEventsPost sends a security event from the native eBPF agent
 func (c *Connection) SecurityEventsPost(msg SecurityEventsPost) error {
-	if logger.IsSectionEnabled(logger.SectionFalco) {
+	if logger.IsSectionEnabled(logger.SectionSecurity) {
 		c.log.Debug().Msgf("Connection.SecurityEventsPost: ID: %s, method: %s, agent_type: %s", msg.ID, msg.Method, msg.AgentType)
 	}
 	if c.State() != StateConnected {
@@ -392,13 +365,42 @@ func (c *Connection) SecurityEventsPost(msg SecurityEventsPost) error {
 		return err
 	}
 
-	if logger.VerboseLevel > 0 && logger.IsSectionEnabled(logger.SectionFalco) {
+	if logger.VerboseLevel > 0 && logger.IsSectionEnabled(logger.SectionSecurity) {
 		c.log.Debug().Str("data", logger.FormatBytes(jsonData)).Msg("SecurityEventsPost - Sending")
 	}
 
 	_, err = c.conn.Write(jsonData)
 	if err != nil {
 		c.log.Err(err).Msg("Connection.SecurityEventsPost - Error sending SecurityEventsPost")
+		return err
+	}
+
+	return nil
+}
+
+// SecurityEventsBatchPost sends a batch of security events with gzip compression
+func (c *Connection) SecurityEventsBatchPost(msg SecurityEventsBatchPost) error {
+	if logger.IsSectionEnabled(logger.SectionSecurity) {
+		c.log.Debug().Msgf("Connection.SecurityEventsBatchPost: ID: %s, method: %s, params_size: %d",
+			msg.ID, msg.Method, len(msg.Params))
+	}
+	if c.State() != StateConnected {
+		return ErrNotConnected
+	}
+
+	jsonData, err := json.Marshal(msg)
+	if err != nil {
+		c.log.Err(err).Msg("Connection.SecurityEventsBatchPost - Error marshalling SecurityEventsBatchPost")
+		return err
+	}
+
+	if logger.VerboseLevel > 0 && logger.IsSectionEnabled(logger.SectionSecurity) {
+		c.log.Debug().Int("payload_size", len(jsonData)).Msg("SecurityEventsBatchPost - Sending")
+	}
+
+	_, err = c.conn.Write(jsonData)
+	if err != nil {
+		c.log.Err(err).Msg("Connection.SecurityEventsBatchPost - Error sending SecurityEventsBatchPost")
 		return err
 	}
 

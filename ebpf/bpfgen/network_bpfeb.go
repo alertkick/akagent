@@ -12,7 +12,18 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type networkNetworkEvent struct {
+type NetworkConnectCtx struct {
+	Pid    uint32
+	Ppid   uint32
+	Uid    uint32
+	Gid    uint32
+	Comm   [16]int8
+	Family uint16
+	Dport  uint16
+	Daddr  [16]uint8
+}
+
+type NetworkNetworkEvent struct {
 	TimestampNs uint64
 	EventType   uint32
 	Pid         uint32
@@ -29,28 +40,28 @@ type networkNetworkEvent struct {
 	RetCode     int32
 }
 
-// loadNetwork returns the embedded CollectionSpec for network.
-func loadNetwork() (*ebpf.CollectionSpec, error) {
+// LoadNetwork returns the embedded CollectionSpec for Network.
+func LoadNetwork() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_NetworkBytes)
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
 	if err != nil {
-		return nil, fmt.Errorf("can't load network: %w", err)
+		return nil, fmt.Errorf("can't load Network: %w", err)
 	}
 
 	return spec, err
 }
 
-// loadNetworkObjects loads network and converts it into a struct.
+// LoadNetworkObjects loads Network and converts it into a struct.
 //
 // The following types are suitable as obj argument:
 //
-//	*networkObjects
-//	*networkPrograms
-//	*networkMaps
+//	*NetworkObjects
+//	*NetworkPrograms
+//	*NetworkMaps
 //
 // See ebpf.CollectionSpec.LoadAndAssign documentation for details.
-func loadNetworkObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
-	spec, err := loadNetwork()
+func LoadNetworkObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
+	spec, err := LoadNetwork()
 	if err != nil {
 		return err
 	}
@@ -58,75 +69,93 @@ func loadNetworkObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	return spec.LoadAndAssign(obj, opts)
 }
 
-// networkSpecs contains maps and programs before they are loaded into the kernel.
+// NetworkSpecs contains maps and programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type networkSpecs struct {
-	networkProgramSpecs
-	networkMapSpecs
+type NetworkSpecs struct {
+	NetworkProgramSpecs
+	NetworkMapSpecs
 }
 
-// networkSpecs contains programs before they are loaded into the kernel.
+// NetworkSpecs contains programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type networkProgramSpecs struct {
+type NetworkProgramSpecs struct {
 	TracepointSyscallsSysEnterAccept4 *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_accept4"`
 	TracepointSyscallsSysEnterBind    *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_bind"`
 	TracepointSyscallsSysEnterConnect *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_connect"`
 	TracepointSyscallsSysEnterSocket  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_socket"`
+	TracepointSyscallsSysExitConnect  *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_exit_connect"`
 }
 
-// networkMapSpecs contains maps before they are loaded into the kernel.
+// NetworkMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type networkMapSpecs struct {
-	NetworkEvents *ebpf.MapSpec `ebpf:"network_events"`
+type NetworkMapSpecs struct {
+	ConnectContext *ebpf.MapSpec `ebpf:"connect_context"`
+	DiscardComms   *ebpf.MapSpec `ebpf:"discard_comms"`
+	DiscardConfig  *ebpf.MapSpec `ebpf:"discard_config"`
+	DiscardPids    *ebpf.MapSpec `ebpf:"discard_pids"`
+	DiscardStats   *ebpf.MapSpec `ebpf:"discard_stats"`
+	NetworkEvents  *ebpf.MapSpec `ebpf:"network_events"`
 }
 
-// networkObjects contains all objects after they have been loaded into the kernel.
+// NetworkObjects contains all objects after they have been loaded into the kernel.
 //
-// It can be passed to loadNetworkObjects or ebpf.CollectionSpec.LoadAndAssign.
-type networkObjects struct {
-	networkPrograms
-	networkMaps
+// It can be passed to LoadNetworkObjects or ebpf.CollectionSpec.LoadAndAssign.
+type NetworkObjects struct {
+	NetworkPrograms
+	NetworkMaps
 }
 
-func (o *networkObjects) Close() error {
+func (o *NetworkObjects) Close() error {
 	return _NetworkClose(
-		&o.networkPrograms,
-		&o.networkMaps,
+		&o.NetworkPrograms,
+		&o.NetworkMaps,
 	)
 }
 
-// networkMaps contains all maps after they have been loaded into the kernel.
+// NetworkMaps contains all maps after they have been loaded into the kernel.
 //
-// It can be passed to loadNetworkObjects or ebpf.CollectionSpec.LoadAndAssign.
-type networkMaps struct {
-	NetworkEvents *ebpf.Map `ebpf:"network_events"`
+// It can be passed to LoadNetworkObjects or ebpf.CollectionSpec.LoadAndAssign.
+type NetworkMaps struct {
+	ConnectContext *ebpf.Map `ebpf:"connect_context"`
+	DiscardComms   *ebpf.Map `ebpf:"discard_comms"`
+	DiscardConfig  *ebpf.Map `ebpf:"discard_config"`
+	DiscardPids    *ebpf.Map `ebpf:"discard_pids"`
+	DiscardStats   *ebpf.Map `ebpf:"discard_stats"`
+	NetworkEvents  *ebpf.Map `ebpf:"network_events"`
 }
 
-func (m *networkMaps) Close() error {
+func (m *NetworkMaps) Close() error {
 	return _NetworkClose(
+		m.ConnectContext,
+		m.DiscardComms,
+		m.DiscardConfig,
+		m.DiscardPids,
+		m.DiscardStats,
 		m.NetworkEvents,
 	)
 }
 
-// networkPrograms contains all programs after they have been loaded into the kernel.
+// NetworkPrograms contains all programs after they have been loaded into the kernel.
 //
-// It can be passed to loadNetworkObjects or ebpf.CollectionSpec.LoadAndAssign.
-type networkPrograms struct {
+// It can be passed to LoadNetworkObjects or ebpf.CollectionSpec.LoadAndAssign.
+type NetworkPrograms struct {
 	TracepointSyscallsSysEnterAccept4 *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_accept4"`
 	TracepointSyscallsSysEnterBind    *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_bind"`
 	TracepointSyscallsSysEnterConnect *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_connect"`
 	TracepointSyscallsSysEnterSocket  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_socket"`
+	TracepointSyscallsSysExitConnect  *ebpf.Program `ebpf:"tracepoint__syscalls__sys_exit_connect"`
 }
 
-func (p *networkPrograms) Close() error {
+func (p *NetworkPrograms) Close() error {
 	return _NetworkClose(
 		p.TracepointSyscallsSysEnterAccept4,
 		p.TracepointSyscallsSysEnterBind,
 		p.TracepointSyscallsSysEnterConnect,
 		p.TracepointSyscallsSysEnterSocket,
+		p.TracepointSyscallsSysExitConnect,
 	)
 }
 

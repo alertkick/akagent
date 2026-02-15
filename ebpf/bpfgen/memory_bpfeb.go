@@ -12,7 +12,7 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type memoryMemoryEvent struct {
+type MemoryMemoryEvent struct {
 	TimestampNs uint64
 	EventType   uint32
 	Pid         uint32
@@ -25,30 +25,32 @@ type memoryMemoryEvent struct {
 	Len         uint64
 	Prot        uint32
 	RetCode     int32
+	Flags       uint32
+	Fd          int32
 }
 
-// loadMemory returns the embedded CollectionSpec for memory.
-func loadMemory() (*ebpf.CollectionSpec, error) {
+// LoadMemory returns the embedded CollectionSpec for Memory.
+func LoadMemory() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_MemoryBytes)
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
 	if err != nil {
-		return nil, fmt.Errorf("can't load memory: %w", err)
+		return nil, fmt.Errorf("can't load Memory: %w", err)
 	}
 
 	return spec, err
 }
 
-// loadMemoryObjects loads memory and converts it into a struct.
+// LoadMemoryObjects loads Memory and converts it into a struct.
 //
 // The following types are suitable as obj argument:
 //
-//	*memoryObjects
-//	*memoryPrograms
-//	*memoryMaps
+//	*MemoryObjects
+//	*MemoryPrograms
+//	*MemoryMaps
 //
 // See ebpf.CollectionSpec.LoadAndAssign documentation for details.
-func loadMemoryObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
-	spec, err := loadMemory()
+func LoadMemoryObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
+	spec, err := LoadMemory()
 	if err != nil {
 		return err
 	}
@@ -56,65 +58,80 @@ func loadMemoryObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	return spec.LoadAndAssign(obj, opts)
 }
 
-// memorySpecs contains maps and programs before they are loaded into the kernel.
+// MemorySpecs contains maps and programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type memorySpecs struct {
-	memoryProgramSpecs
-	memoryMapSpecs
+type MemorySpecs struct {
+	MemoryProgramSpecs
+	MemoryMapSpecs
 }
 
-// memorySpecs contains programs before they are loaded into the kernel.
+// MemorySpecs contains programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type memoryProgramSpecs struct {
+type MemoryProgramSpecs struct {
+	TracepointSyscallsSysEnterMmap     *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_mmap"`
 	TracepointSyscallsSysEnterMprotect *ebpf.ProgramSpec `ebpf:"tracepoint__syscalls__sys_enter_mprotect"`
 }
 
-// memoryMapSpecs contains maps before they are loaded into the kernel.
+// MemoryMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type memoryMapSpecs struct {
-	MemoryEvents *ebpf.MapSpec `ebpf:"memory_events"`
+type MemoryMapSpecs struct {
+	DiscardComms  *ebpf.MapSpec `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.MapSpec `ebpf:"discard_config"`
+	DiscardPids   *ebpf.MapSpec `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.MapSpec `ebpf:"discard_stats"`
+	MemoryEvents  *ebpf.MapSpec `ebpf:"memory_events"`
 }
 
-// memoryObjects contains all objects after they have been loaded into the kernel.
+// MemoryObjects contains all objects after they have been loaded into the kernel.
 //
-// It can be passed to loadMemoryObjects or ebpf.CollectionSpec.LoadAndAssign.
-type memoryObjects struct {
-	memoryPrograms
-	memoryMaps
+// It can be passed to LoadMemoryObjects or ebpf.CollectionSpec.LoadAndAssign.
+type MemoryObjects struct {
+	MemoryPrograms
+	MemoryMaps
 }
 
-func (o *memoryObjects) Close() error {
+func (o *MemoryObjects) Close() error {
 	return _MemoryClose(
-		&o.memoryPrograms,
-		&o.memoryMaps,
+		&o.MemoryPrograms,
+		&o.MemoryMaps,
 	)
 }
 
-// memoryMaps contains all maps after they have been loaded into the kernel.
+// MemoryMaps contains all maps after they have been loaded into the kernel.
 //
-// It can be passed to loadMemoryObjects or ebpf.CollectionSpec.LoadAndAssign.
-type memoryMaps struct {
-	MemoryEvents *ebpf.Map `ebpf:"memory_events"`
+// It can be passed to LoadMemoryObjects or ebpf.CollectionSpec.LoadAndAssign.
+type MemoryMaps struct {
+	DiscardComms  *ebpf.Map `ebpf:"discard_comms"`
+	DiscardConfig *ebpf.Map `ebpf:"discard_config"`
+	DiscardPids   *ebpf.Map `ebpf:"discard_pids"`
+	DiscardStats  *ebpf.Map `ebpf:"discard_stats"`
+	MemoryEvents  *ebpf.Map `ebpf:"memory_events"`
 }
 
-func (m *memoryMaps) Close() error {
+func (m *MemoryMaps) Close() error {
 	return _MemoryClose(
+		m.DiscardComms,
+		m.DiscardConfig,
+		m.DiscardPids,
+		m.DiscardStats,
 		m.MemoryEvents,
 	)
 }
 
-// memoryPrograms contains all programs after they have been loaded into the kernel.
+// MemoryPrograms contains all programs after they have been loaded into the kernel.
 //
-// It can be passed to loadMemoryObjects or ebpf.CollectionSpec.LoadAndAssign.
-type memoryPrograms struct {
+// It can be passed to LoadMemoryObjects or ebpf.CollectionSpec.LoadAndAssign.
+type MemoryPrograms struct {
+	TracepointSyscallsSysEnterMmap     *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_mmap"`
 	TracepointSyscallsSysEnterMprotect *ebpf.Program `ebpf:"tracepoint__syscalls__sys_enter_mprotect"`
 }
 
-func (p *memoryPrograms) Close() error {
+func (p *MemoryPrograms) Close() error {
 	return _MemoryClose(
+		p.TracepointSyscallsSysEnterMmap,
 		p.TracepointSyscallsSysEnterMprotect,
 	)
 }

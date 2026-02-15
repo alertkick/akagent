@@ -6,16 +6,12 @@ import (
 	"apagent/client"
 	"apagent/config"
 	"apagent/ebpf"
-	"apagent/falco_manager"
 	"apagent/internal/api"
-	"apagent/internal/systemd"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"slices"
 	"sync"
 	"time"
 
@@ -23,13 +19,6 @@ import (
 	"os"
 
 	"github.com/rs/zerolog"
-	"github.com/spf13/viper"
-
-	// Import agent implementations to register them
-	_ "apagent/ebpf/agents/falco"
-	_ "apagent/ebpf/agents/native"
-	_ "apagent/ebpf/agents/pixie"
-	_ "apagent/ebpf/agents/tetragon"
 )
 
 const (
@@ -40,7 +29,6 @@ func init() {
 	gob.Register(api.CheckMetricParams{})
 	gob.Register(api.MetricGroup{})
 	gob.Register(api.Metric{})
-	// Register any other types used within CheckMetricParams if needed
 }
 
 type agent struct {
@@ -48,38 +36,32 @@ type agent struct {
 	agentToken         string
 	AgentID            string
 	AgentName          string
-	FalcoEnabled       bool
 	Subdomain          string
 	Tenant             string
 	timeout            int
-	heartbeatInterval  int // seconds
+	heartbeatInterval  int
 	sentHeartbeatCount int
 	debug              bool
-	falcoManager       *falco_manager.FalcoManager
 	checkerManager     *checker.CheckerManager
 	wg                 sync.WaitGroup
 	log                zerolog.Logger
 	shutdown           chan struct{}
-	falcoShutdown      chan struct{}
 	ctx                context.Context
 	cancelFunc         context.CancelFunc
-
-	// Legacy Falco event queue (for backward compatibility)
-	falcoEventQueue         []falco_manager.FalcoEventPayload
-	falcoEventQueueMutex    sync.Mutex
-	falcoEventMaxQueueSize  int
 
 	// Check result queue
 	checkResultQueue        []api.CheckMetricParams
 	checkResultQueueMutex   sync.Mutex
 	checkResultMaxQueueSize int
 
-	// Multi-eBPF agent support
-	ebpfManager               *ebpf.AgentManager
+	// Agent version (injected at build time)
+	version string
+
+	// Native eBPF agent support
+	nativeAgent               *ebpf.NativeEBPFAgent
 	securityEventQueue        []ebpf.SecurityEvent
 	securityEventQueueMutex   sync.Mutex
 	securityEventMaxQueueSize int
-	useNewEBPFManager         bool // Flag to use new multi-agent system
 }
 
 func NewAgentClient(conf *config.Config, kernalVersion string, log zerolog.Logger, version string) (*agent, error) {
@@ -95,19 +77,16 @@ func NewAgentClient(conf *config.Config, kernalVersion string, log zerolog.Logge
 		Subdomain:                 conf.Subdomain,
 		Tenant:                    conf.Subdomain,
 		agentToken:                conf.AgentToken,
-		FalcoEnabled:              conf.FalcoEnabled,
+		version:                   version,
 		heartbeatInterval:         10,
 		sentHeartbeatCount:        0,
 		timeout:                   10,
 		ctx:                       ctx,
 		cancelFunc:                cancel,
-		falcoEventQueue:           make([]falco_manager.FalcoEventPayload, 0, 1000),
 		checkResultQueue:          make([]api.CheckMetricParams, 0, 1000),
 		securityEventQueue:        make([]ebpf.SecurityEvent, 0, 1000),
-		falcoEventMaxQueueSize:    1000,
 		checkResultMaxQueueSize:   1000,
 		securityEventMaxQueueSize: 1000,
-		useNewEBPFManager:         true, // Enable the new multi-agent system
 	}
 
 	if conf.Debug {
@@ -146,53 +125,42 @@ func (a *agent) Run(shutdown chan struct{}) error {
 	go a.StartResultSender(shutdown, &a.wg)
 	go a.checkerManager.Start()
 
-	// Initialize eBPF agent manager (new multi-agent system)
-	if a.useNewEBPFManager {
-		a.log.Info().Msg("agent.Run - initializing eBPF agent manager")
-		a.ebpfManager = ebpf.NewAgentManager(ebpf.DefaultManagerConfig())
-		if err := a.ebpfManager.Initialize(ctx); err != nil {
-			a.log.Warn().Err(err).Msg("agent.Run - failed to initialize eBPF agent manager")
-		}
-
-		// Enable Falco agent if FalcoEnabled is set (backward compatibility)
-		if a.FalcoEnabled {
-			if err := a.ebpfManager.EnableAgent(ctx, ebpf.AgentTypeFalco); err != nil {
-				a.log.Warn().Err(err).Msg("agent.Run - failed to enable Falco agent via manager")
-			} else {
-				a.log.Info().Msg("agent.Run - Falco agent enabled via eBPF manager")
-			}
-		}
-
-		// Start unified eBPF event sender
-		ebpfShutdown := make(chan struct{})
-		a.wg.Add(1)
-		go a.StartEBPFEventSender(ebpfShutdown, &a.wg)
-
-		// Wait for shutdown signal
-		<-shutdown
-		close(ebpfShutdown)
-		a.log.Debug().Msg("agent.Run - Shutdown signal received, shutting down eBPF manager")
-		if err := a.ebpfManager.Shutdown(ctx); err != nil {
-			a.log.Warn().Err(err).Msg("agent.Run - error shutting down eBPF manager")
-		}
+	// Initialize native eBPF agent (but DO NOT start it - wait for profile)
+	a.log.Info().Msg("agent.Run - initializing native eBPF agent (disabled by default)")
+	nativeAgent, err := ebpf.NewNativeAgent()
+	if err != nil {
+		a.log.Warn().Err(err).Msg("agent.Run - failed to create native eBPF agent")
 	} else {
-		// Legacy Falco-only path
-		a.falcoManager = falco_manager.NewFalcoManager()
-		if a.FalcoEnabled {
-			a.StartFalcoListener()
-			a.log.Info().Msg("agent.Run - falco listener started (legacy)")
+		a.nativeAgent = nativeAgent
+		// Only start if explicitly enabled in config (rare - usually profile triggers it)
+		nativeConfig := a.nativeAgent.GetNativeConfig()
+		if nativeConfig.Enabled {
+			if err := a.nativeAgent.Start(ctx); err != nil {
+				a.log.Warn().Err(err).Msg("agent.Run - failed to start native eBPF agent")
+			} else if err := a.nativeAgent.StartEventListener(ctx); err != nil {
+				a.log.Warn().Err(err).Msg("agent.Run - failed to start native eBPF event listener")
+			}
 		} else {
-			a.log.Info().Msg("agent.Run - falco listener not started because falco is not enabled")
+			a.log.Info().Msg("agent.Run - eBPF agent initialized but not started (waiting for profile)")
 		}
+	}
 
-		falcoShutdown := make(chan struct{})
-		a.wg.Add(1)
-		go a.StartFalcoEventSender(falcoShutdown, &a.wg)
+	// Start eBPF event sender
+	ebpfShutdown := make(chan struct{})
+	a.wg.Add(1)
+	go a.StartEBPFEventSender(ebpfShutdown, &a.wg)
 
-		// Wait for shutdown signal
-		<-shutdown
-		a.StopFalcoListener()
-		close(falcoShutdown)
+	// Wait for shutdown signal
+	<-shutdown
+	close(ebpfShutdown)
+	a.log.Debug().Msg("agent.Run - Shutdown signal received, shutting down native eBPF agent")
+	if a.nativeAgent != nil {
+		if err := a.nativeAgent.StopEventListener(); err != nil {
+			a.log.Warn().Err(err).Msg("agent.Run - error stopping native eBPF event listener")
+		}
+		if err := a.nativeAgent.Stop(ctx); err != nil {
+			a.log.Warn().Err(err).Msg("agent.Run - error stopping native eBPF agent")
+		}
 	}
 
 	a.log.Debug().Msg("agent.Run - Shutdown signal received, shutting down")
@@ -201,20 +169,6 @@ func (a *agent) Run(shutdown chan struct{}) error {
 	a.Shutdown()
 	a.wg.Wait()
 	return nil
-}
-
-func (a *agent) StartFalcoListener() {
-	if a.falcoManager != nil && !a.falcoManager.Listening() {
-		go a.falcoManager.StartListener()
-		a.log.Info().Msg("agent.StartFalcoListener - falco listener started")
-	}
-}
-
-func (a *agent) StopFalcoListener() {
-	if a.falcoManager != nil && a.falcoManager.Listening() {
-		a.falcoManager.StopListener()
-		a.log.Info().Msg("agent.StopFalcoListener - falco listener shutdown")
-	}
 }
 
 // Shutdown closes the rpc connection
@@ -249,64 +203,27 @@ func (a *agent) StartWatchingServerRequests(requestWatcherShutdown chan struct{}
 }
 
 // HandleServerRequest - handles requests from the server.
-// we can add more cases for additional commands coming from server.
 func (a *agent) HandleServerRequest(req client.Request) error {
 	a.log.Info().Msgf("agent.HandleServerRequest - received request with method: %s", req.Method)
 	a.log.Debug().Msgf("agent.HandleServerRequest - request: %v", req)
-	// It's a request, add it to serverReqChan.
+
 	switch req.Method {
 	case "system.info":
 		a.log.Debug().Msg("agent.HandleServerRequest - received system.info request")
 		a.handleSystemInfoRequest(req)
 		a.CheckScheduleGet()
-	case "falco_files.info":
-		a.log.Debug().Msg("agent.HandleServerRequest - received falco_files.info request")
-		a.handleFalcoConfigRequest(req)
-		if a.FalcoEnabled {
-			a.log.Debug().Msg("agent.HandleServerRequest - getting falco rules from server")
-			a.GetFalcoRuleFiles()
-		} else {
-			a.log.Warn().Msg("agent.HandleServerRequest - falco is not enabled, skipping getting falco rules")
+		// Fetch stored native agent config from server (if any)
+		if err := a.NativeConfigGetStored(); err != nil {
+			a.log.Warn().Err(err).Msg("agent.HandleServerRequest - failed to get stored native config")
 		}
-	case "enable_falco":
-		a.log.Debug().Msg("agent.HandleServerRequest - received enable_falco request")
-		a.handleEnableFalcoRequest(req)
-	case "disable_falco":
-		a.log.Debug().Msg("agent.HandleServerRequest - received disable_falco request")
-		a.handleDisableFalcoRequest(req)
 	case "agent.refresh_check_profiles":
-		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_check_profiles or refresh_checks request")
+		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_check_profiles request")
 		a.handleRefreshCheckProfilesRequest(req)
 	case "agent.refresh_checks":
 		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_checks request")
 		a.handleRefreshChecksRequest(req)
 	case "host_info_types.get":
 		a.log.Debug().Msg("agent.HandleServerRequest - received host_info_types.get request")
-		// handleMethod2(req)
-	case "refresh_falco_rules":
-		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_falco_rules request")
-		a.handleRefreshFalcoRulesRequest(req)
-	case "falco_service.start":
-		a.log.Debug().Msg("agent.HandleServerRequest - received falco_service.start request")
-		a.handleFalcoServiceStartRequest(req)
-	case "falco_service.stop":
-		a.log.Debug().Msg("agent.HandleServerRequest - received falco_service.stop request")
-		a.handleFalcoServiceStopRequest(req)
-	case "falco_service.restart":
-		a.log.Debug().Msg("agent.HandleServerRequest - received falco_service.restart request")
-		a.handleFalcoServiceRestartRequest(req)
-	case "falco_service.status":
-		a.log.Debug().Msg("agent.HandleServerRequest - received falco_service.status request")
-		a.handleFalcoServiceStatusRequest(req)
-	case "falco_service.logs":
-		a.log.Debug().Msg("agent.HandleServerRequest - received falco_service.logs request")
-		a.handleFalcoServiceLogsRequest(req)
-	case "falco_config.get":
-		a.log.Debug().Msg("agent.HandleServerRequest - received falco_config.get request")
-		a.handleFalcoConfigGetRequest(req)
-	case "falco_config.test":
-		a.log.Debug().Msg("agent.HandleServerRequest - received falco_config.test request")
-		a.handleFalcoConfigTestRequest(req)
 	// Native eBPF agent handlers
 	case "native_config.get":
 		a.log.Debug().Msg("agent.HandleServerRequest - received native_config.get request")
@@ -326,13 +243,17 @@ func (a *agent) HandleServerRequest(req client.Request) error {
 	case "refresh_native_config":
 		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_native_config request")
 		a.handleRefreshNativeConfigRequest(req)
+	case "agent.refresh_compliance":
+		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_compliance request")
+		a.handleRefreshComplianceRequest(req)
+	case "update_agent":
+		a.log.Info().Msg("agent.HandleServerRequest - received update_agent request")
+		go a.handleUpdateAgentRequest(req)
 	default:
-		// we need to send a response to the server to indicate that the request is not supported
 		a.log.Warn().Msgf("agent.HandleServerRequest - unknown method: %s", req.Method)
 		a.handleUnknownMethod(req)
 	}
 	return nil
-
 }
 
 func (a *agent) handleUnknownMethod(req client.Request) {
@@ -352,592 +273,12 @@ func (a *agent) handleUnknownMethod(req client.Request) {
 	}
 }
 
-func (a *agent) handleEnableFalcoRequest(req client.Request) {
-	a.log.Info().Msg("agent.handleEnableFalcoRequest - START")
-	a.FalcoEnabled = true
-	a.log.Info().Msgf("agent.handleEnableFalcoRequest - FalcoEnabled: %t", a.FalcoEnabled)
-	falcoToggleStatus := client.FalcoToggleStatus{
-		Enabled: false,
-	}
-
-	// update the agent config file with the new falco enabled value
-	currentConfig := config.GetConfig(a.log)
-	currentConfig.FalcoEnabled = true
-	config.UpdateConfigFileWithOption(currentConfig)
-	a.log.Info().Msgf("agent.handleEnableFalcoRequest - config updated,FalcoEnabled: %t", a.FalcoEnabled)
-	falcoConfigFilePath := "/etc/falco/falco.yaml"
-	v := viper.New()
-	v.SetConfigFile(falcoConfigFilePath)
-
-	if err := v.ReadInConfig(); err != nil {
-		falcoToggleStatus.Error = fmt.Sprintf("{\"error\": \"%s\"}", err.Error())
-		a.log.Err(err).Msg("agent.handleEnableFalcoRequest - error reading falco config")
-	}
-
-	v.Set("json_output", true)
-	v.Set("http_output.enabled", true)
-	v.Set("http_output.url", "http://127.0.0.1:2801")
-	v.Set("http_output.insecure", true)
-
-	// create the rules.alertpriority directory if it doesn't exist
-	rulesAlertpriorityDir := "/etc/falco/rules.alertpriority"
-	if _, err := os.Stat(rulesAlertpriorityDir); os.IsNotExist(err) {
-		os.MkdirAll(rulesAlertpriorityDir, 0755)
-	}
-
-	// create the rules.d directory if it doesn't exist
-	rulesDirs := "/etc/falco/rules.d"
-	if _, err := os.Stat(rulesDirs); os.IsNotExist(err) {
-		os.MkdirAll(rulesDirs, 0755)
-	}
-
-	ruleFilesDirs := v.GetStringSlice("rules_files")
-	if ruleFilesDirs == nil {
-		ruleFilesDirs = []string{
-			"/etc/falco/falco_rules.yaml",
-			"/etc/falco/falco_rules.local.yaml",
-			"/etc/falco/rules.d",
-			"/etc/falco/rules.alertpriority",
-		}
-	} else {
-		// check if the rules.alertpriority is missing in ruleFilesDirs, and add it.
-		if !slices.Contains(ruleFilesDirs, "/etc/falco/rules.alertpriority") {
-			ruleFilesDirs = append(ruleFilesDirs, "/etc/falco/rules.alertpriority")
-		}
-	}
-	v.Set("rules_files", ruleFilesDirs)
-
-	if err := v.WriteConfig(); err != nil {
-		falcoToggleStatus.Error = fmt.Sprintf("{\"error\": \"%s\"}", err.Error())
-		a.log.Err(err).Msg("agent.handleEnableFalcoRequest - error writing falco config")
-	}
-	falcoToggleStatus.Enabled = true
-
-	returnCode := systemd.RestartService("falco-modern-bpf.service")
-	if returnCode != 0 {
-		falcoToggleStatus.Error = fmt.Sprintf("{\"error\": \"failed to restart Falco service, return code: %d\"}", returnCode)
-		a.log.Err(fmt.Errorf("agent.handleEnableFalcoRequest - failed to restart Falco service, return code: %d", returnCode)).Msg("error during enable_falco request")
-	}
-
-	msg := client.Response{
-		Version:   "1",
-		ID:        req.ID,
-		Target:    "falco.toggle",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Result:    json.RawMessage(falcoToggleStatus.String()),
-		Err:       client.Error{Message: falcoToggleStatus.Error},
-	}
-
-	a.log.Info().Msgf("agent.handleEnableFalcoRequest - Sending response for enable_falco request: %v", msg)
-	err := a.conn.SendJSONMessageNoResponse(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.handleEnableFalcoRequest - error during `enable_falco` submit")
-		// Send an empty Results message to leave the endpoint channel waiting
-		emptyMsg := client.Response{
-			Version:   "1",
-			ID:        req.ID,
-			Target:    "falco.toggle",
-			Source:    a.AgentID,
-			Tenant:    a.Subdomain,
-			Subdomain: a.Subdomain,
-			Result:    json.RawMessage("{}"),
-			Err:       client.Error{Message: err.Error()},
-		}
-		if err := a.conn.SendJSONMessageNoResponse(emptyMsg); err != nil {
-			a.log.Err(err).Msg("agent.handleEnableFalcoRequest - error sending empty response for enable_falco request")
-		}
-		return
-	}
-	a.StartFalcoListener()
-	serviceStatus := a.falcoManager.FalcoServiceAgentRunning()
-	a.UpdateFalcoAgentServiceStatus(serviceStatus)
-	a.log.Info().Msgf("agent.handleEnableFalcoRequest - END - Sent response for enable_falco request: %v", msg)
-}
-
-func (a *agent) handleDisableFalcoRequest(req client.Request) {
-	a.log.Info().Msg("agent.handleDisableFalcoRequest - START")
-	a.FalcoEnabled = false
-
-	// update the agent config file with the new falco enabled value
-	currentConfig := config.GetConfig(a.log)
-	currentConfig.FalcoEnabled = false
-	config.UpdateConfigFileWithOption(currentConfig)
-	a.log.Info().Msgf("agent.handleDisableFalcoRequest - config updated,FalcoEnabled: %t", a.FalcoEnabled)
-
-	falcoToggleStatus := client.FalcoToggleStatus{
-		Enabled: false,
-	}
-
-	a.log.Info().Msg("agent.handleDisableFalcoRequest - stopping Falco service")
-	returnCode := systemd.StopService("falco-modern-bpf.service")
-	if returnCode != 0 {
-		falcoToggleStatus.Error = fmt.Sprintf("{\"error\": \"failed to stop Falco service, return code: %d\"}", returnCode)
-		a.log.Err(fmt.Errorf("agent.handleDisableFalcoRequest - failed to stop Falco service, return code: %d", returnCode)).Msg("error during disable_falco request")
-	}
-
-	msg := client.Response{
-		Version:   "1",
-		ID:        req.ID,
-		Target:    "falco.toggle",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Result:    json.RawMessage(falcoToggleStatus.String()),
-	}
-
-	err := a.conn.SendJSONMessageNoResponse(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.handleDisableFalcoRequest - error during `disable_falco` submit")
-		return
-	}
-	a.StopFalcoListener()
-
-	serviceStatus := a.falcoManager.FalcoServiceAgentRunning()
-	a.UpdateFalcoAgentServiceStatus(serviceStatus)
-	a.log.Info().Msg("agent.handleDisableFalcoRequest - END")
-}
-
-func (a *agent) handleRefreshFalcoRulesRequest(req client.Request) {
-	a.log.Info().Msg("agent.handleRefreshFalcoRulesRequest - START")
-	response := client.GeneralCommandResponse{
-		Message: "Falco rules refreshed",
-		Status:  "success",
-		Error:   "",
-	}
-
-	msg := client.Response{
-		Version:   "1",
-		ID:        req.ID,
-		Target:    "falco.refresh_rules",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Result:    json.RawMessage(response.String()),
-	}
-
-	err := a.conn.SendJSONMessageNoResponse(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.handleRefreshFalcoRulesRequest - error during `refresh_falco_rules` submit")
-		return
-	}
-
-	a.GetFalcoRuleFiles()
-	a.log.Info().Msg("agent.handleRefreshFalcoRulesRequest - END")
-}
-
-const falcoServiceName = "falco-modern-bpf.service"
-
-func (a *agent) handleFalcoServiceStartRequest(req client.Request) {
-	a.log.Info().Msg("agent.handleFalcoServiceStartRequest - START")
-
-	response := client.FalcoServiceResponse{
-		Action:  "start",
-		Status:  "success",
-		Message: "Falco service started successfully",
-	}
-
-	returnCode := systemd.StartService(falcoServiceName)
-	if returnCode != 0 {
-		response.Status = "failed"
-		response.Message = fmt.Sprintf("Failed to start Falco service, return code: %d", returnCode)
-		response.Error = response.Message
-	}
-
-	// Get current service status
-	activeState, subState, _ := systemd.GetServiceStatus(falcoServiceName)
-	if activeState == "active" && subState == "running" {
-		response.ServiceStatus = "running"
-	} else {
-		response.ServiceStatus = "stopped"
-	}
-
-	msg := client.Response{
-		Version:   "1",
-		ID:        req.ID,
-		Target:    "falco_service.start",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Result:    json.RawMessage(response.String()),
-	}
-
-	err := a.conn.SendJSONMessageNoResponse(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.handleFalcoServiceStartRequest - error sending response")
-	}
-
-	// Update service status
-	a.UpdateFalcoAgentServiceStatus(response.ServiceStatus)
-	a.log.Info().Msg("agent.handleFalcoServiceStartRequest - END")
-}
-
-func (a *agent) handleFalcoServiceStopRequest(req client.Request) {
-	a.log.Info().Msg("agent.handleFalcoServiceStopRequest - START")
-
-	response := client.FalcoServiceResponse{
-		Action:  "stop",
-		Status:  "success",
-		Message: "Falco service stopped successfully",
-	}
-
-	returnCode := systemd.StopService(falcoServiceName)
-	if returnCode != 0 {
-		response.Status = "failed"
-		response.Message = fmt.Sprintf("Failed to stop Falco service, return code: %d", returnCode)
-		response.Error = response.Message
-	}
-
-	// Get current service status
-	activeState, subState, _ := systemd.GetServiceStatus(falcoServiceName)
-	if activeState == "active" && subState == "running" {
-		response.ServiceStatus = "running"
-	} else {
-		response.ServiceStatus = "stopped"
-	}
-
-	msg := client.Response{
-		Version:   "1",
-		ID:        req.ID,
-		Target:    "falco_service.stop",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Result:    json.RawMessage(response.String()),
-	}
-
-	err := a.conn.SendJSONMessageNoResponse(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.handleFalcoServiceStopRequest - error sending response")
-	}
-
-	// Update service status
-	a.UpdateFalcoAgentServiceStatus(response.ServiceStatus)
-	a.log.Info().Msg("agent.handleFalcoServiceStopRequest - END")
-}
-
-func (a *agent) handleFalcoServiceRestartRequest(req client.Request) {
-	a.log.Info().Msg("agent.handleFalcoServiceRestartRequest - START")
-
-	response := client.FalcoServiceResponse{
-		Action:  "restart",
-		Status:  "success",
-		Message: "Falco service restarted successfully",
-	}
-
-	returnCode := systemd.RestartService(falcoServiceName)
-	if returnCode != 0 {
-		response.Status = "failed"
-		response.Message = fmt.Sprintf("Failed to restart Falco service, return code: %d", returnCode)
-		response.Error = response.Message
-	}
-
-	// Get current service status
-	activeState, subState, _ := systemd.GetServiceStatus(falcoServiceName)
-	if activeState == "active" && subState == "running" {
-		response.ServiceStatus = "running"
-	} else {
-		response.ServiceStatus = "stopped"
-	}
-
-	msg := client.Response{
-		Version:   "1",
-		ID:        req.ID,
-		Target:    "falco_service.restart",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Result:    json.RawMessage(response.String()),
-	}
-
-	err := a.conn.SendJSONMessageNoResponse(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.handleFalcoServiceRestartRequest - error sending response")
-	}
-
-	// Update service status
-	a.UpdateFalcoAgentServiceStatus(response.ServiceStatus)
-	a.log.Info().Msg("agent.handleFalcoServiceRestartRequest - END")
-}
-
-func (a *agent) handleFalcoServiceStatusRequest(req client.Request) {
-	a.log.Info().Msg("agent.handleFalcoServiceStatusRequest - START")
-
-	response := client.FalcoServiceResponse{
-		Action:  "status",
-		Status:  "success",
-		Message: "Falco service status retrieved",
-	}
-
-	activeState, subState, returnCode := systemd.GetServiceStatus(falcoServiceName)
-	if returnCode != 0 {
-		response.Status = "failed"
-		response.ServiceStatus = "unknown"
-		response.Message = fmt.Sprintf("Failed to get Falco service status, return code: %d", returnCode)
-		response.Error = response.Message
-	} else {
-		if activeState == "active" && subState == "running" {
-			response.ServiceStatus = "running"
-		} else if activeState == "inactive" {
-			response.ServiceStatus = "stopped"
-		} else {
-			response.ServiceStatus = activeState + "/" + subState
-		}
-	}
-
-	msg := client.Response{
-		Version:   "1",
-		ID:        req.ID,
-		Target:    "falco_service.status",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Result:    json.RawMessage(response.String()),
-	}
-
-	err := a.conn.SendJSONMessageNoResponse(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.handleFalcoServiceStatusRequest - error sending response")
-	}
-
-	// Update service status
-	a.UpdateFalcoAgentServiceStatus(response.ServiceStatus)
-	a.log.Info().Msg("agent.handleFalcoServiceStatusRequest - END")
-}
-
-func (a *agent) handleFalcoServiceLogsRequest(req client.Request) {
-	a.log.Info().Msg("agent.handleFalcoServiceLogsRequest - START")
-
-	// Parse the lines parameter from request
-	lines := 100 // default
-	if req.Params != nil {
-		var params struct {
-			Lines int `json:"lines"`
-		}
-		if err := json.Unmarshal(req.Params, &params); err == nil && params.Lines > 0 {
-			lines = params.Lines
-		}
-	}
-
-	response := client.FalcoLogsResponse{
-		Lines:  lines,
-		Status: "success",
-	}
-
-	logs, err := systemd.GetServiceLogs(falcoServiceName, lines)
-	if err != nil {
-		response.Status = "failed"
-		response.Error = err.Error()
-		response.Message = "Failed to retrieve Falco service logs"
-	} else {
-		response.Logs = logs
-		response.Message = "Falco service logs retrieved successfully"
-	}
-
-	msg := client.Response{
-		Version:   "1",
-		ID:        req.ID,
-		Target:    "falco_service.logs",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Result:    json.RawMessage(response.String()),
-	}
-
-	err = a.conn.SendJSONMessageNoResponse(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.handleFalcoServiceLogsRequest - error sending response")
-	}
-
-	a.log.Info().Msg("agent.handleFalcoServiceLogsRequest - END")
-}
-
-const falcoConfigDir = "/etc/falco"
-
-func (a *agent) handleFalcoConfigGetRequest(req client.Request) {
-	a.log.Info().Msg("agent.handleFalcoConfigGetRequest - START")
-
-	response := client.FalcoConfigResponse{
-		Status:        "success",
-		ConfigFiles:   []client.FalcoConfigFile{},
-		FolderListing: []client.FalcoConfigFile{},
-	}
-
-	// Read main config file
-	mainConfigPath := filepath.Join(falcoConfigDir, "falco.yaml")
-	if content, err := os.ReadFile(mainConfigPath); err == nil {
-		response.ConfigFiles = append(response.ConfigFiles, client.FalcoConfigFile{
-			Path:    mainConfigPath,
-			Name:    "falco.yaml",
-			Content: string(content),
-			Size:    int64(len(content)),
-			IsDir:   false,
-		})
-	}
-
-	// Read rules files
-	rulesFiles := []string{"falco_rules.yaml", "falco_rules.local.yaml"}
-	for _, fileName := range rulesFiles {
-		filePath := filepath.Join(falcoConfigDir, fileName)
-		if content, err := os.ReadFile(filePath); err == nil {
-			response.ConfigFiles = append(response.ConfigFiles, client.FalcoConfigFile{
-				Path:    filePath,
-				Name:    fileName,
-				Content: string(content),
-				Size:    int64(len(content)),
-				IsDir:   false,
-			})
-		}
-	}
-
-	// Get folder listing
-	entries, err := os.ReadDir(falcoConfigDir)
-	if err != nil {
-		response.Status = "failed"
-		response.Error = err.Error()
-		response.Message = "Failed to read Falco config directory"
-	} else {
-		for _, entry := range entries {
-			info, err := entry.Info()
-			size := int64(0)
-			if err == nil {
-				size = info.Size()
-			}
-			response.FolderListing = append(response.FolderListing, client.FalcoConfigFile{
-				Path:  filepath.Join(falcoConfigDir, entry.Name()),
-				Name:  entry.Name(),
-				Size:  size,
-				IsDir: entry.IsDir(),
-			})
-		}
-		response.Message = "Falco config retrieved successfully"
-	}
-
-	msg := client.Response{
-		Version:   "1",
-		ID:        req.ID,
-		Target:    "falco_config.get",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Result:    json.RawMessage(response.String()),
-	}
-
-	err = a.conn.SendJSONMessageNoResponse(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.handleFalcoConfigGetRequest - error sending response")
-	}
-
-	a.log.Info().Msg("agent.handleFalcoConfigGetRequest - END")
-}
-
-func (a *agent) handleFalcoConfigTestRequest(req client.Request) {
-	a.log.Info().Msg("agent.handleFalcoConfigTestRequest - START")
-
-	response := client.FalcoConfigTestResponse{
-		Status: "success",
-		Valid:  false,
-	}
-
-	// Find falco binary
-	falcoBinary := "/usr/bin/falco"
-	if _, err := os.Stat(falcoBinary); os.IsNotExist(err) {
-		// Try alternative path
-		falcoBinary = "/usr/local/bin/falco"
-		if _, err := os.Stat(falcoBinary); os.IsNotExist(err) {
-			response.Status = "failed"
-			response.Error = "Falco binary not found"
-			response.Message = "Could not find Falco binary at /usr/bin/falco or /usr/local/bin/falco"
-
-			msg := client.Response{
-				Version:   "1",
-				ID:        req.ID,
-				Target:    "falco_config.test",
-				Source:    a.AgentID,
-				Tenant:    a.Subdomain,
-				Subdomain: a.Subdomain,
-				Result:    json.RawMessage(response.String()),
-			}
-			a.conn.SendJSONMessageNoResponse(msg)
-			return
-		}
-	}
-
-	// Run falco with --dry-run to validate config and rules without actually starting
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Use --dry-run flag which validates config and rules without starting the engine
-	cmd := exec.CommandContext(ctx, falcoBinary, "-c", filepath.Join(falcoConfigDir, "falco.yaml"), "--dry-run")
-	output, err := cmd.CombinedOutput()
-
-	response.Output = string(output)
-
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			response.ExitCode = exitErr.ExitCode()
-		} else {
-			response.ExitCode = -1
-		}
-		response.Valid = false
-		response.Error = err.Error()
-		response.Message = "Falco configuration validation failed"
-	} else {
-		response.Valid = true
-		response.ExitCode = 0
-		response.Message = "Falco configuration is valid"
-	}
-
-	msg := client.Response{
-		Version:   "1",
-		ID:        req.ID,
-		Target:    "falco_config.test",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Result:    json.RawMessage(response.String()),
-	}
-
-	err = a.conn.SendJSONMessageNoResponse(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.handleFalcoConfigTestRequest - error sending response")
-	}
-
-	a.log.Info().Msg("agent.handleFalcoConfigTestRequest - END")
-}
-
-func (a *agent) UpdateFalcoAgentServiceStatus(status string) {
-	params := api.CheckMetricParams{
-		CheckID: "falco.service_status",
-		State:   status,
-	}
-
-	msg := client.CheckResultsPost{
-		Version:   "1",
-		ID:        "1",
-		Target:    "agent",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Method:    "falco.service_status.post",
-		Params:    params,
-	}
-
-	err := a.conn.CheckResultsPost(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.UpdateFalcoAgentServiceStatus - error during falco.service_status_post submit")
-	}
-}
-
 func (a *agent) handleSystemInfoRequest(req client.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	a.log.Debug().Msg("agent.handleSystemInfoRequest - collecting systemInfo")
 	systemInfo := checks.CollectSystemInfo(ctx)
-
-	// a.log.Debug().Msgf("systemInfo: %s", systemInfo.String())
 
 	msg := client.Response{
 		Version:   "1",
@@ -952,36 +293,6 @@ func (a *agent) handleSystemInfoRequest(req client.Request) {
 	err := a.conn.SendJSONMessageNoResponse(msg)
 	if err != nil {
 		a.log.Err(err).Msg("agent.handleSystemInfoRequest - error during systemInfo submit")
-		return
-	}
-
-}
-
-func (a *agent) handleFalcoConfigRequest(req client.Request) {
-	var data []byte
-	var err error
-
-	if a.FalcoEnabled && a.falcoManager != nil {
-		data, err = a.falcoManager.RuleFilesDataJson()
-		if err != nil {
-			a.log.Err(err).Msg("agent.handleFalcoConfigRequest - error marshalling Falco rule files data")
-			return
-		}
-	}
-
-	msg := client.Response{
-		Version:   "1",
-		ID:        req.ID,
-		Target:    "agent",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Result:    json.RawMessage(data),
-	}
-
-	err = a.conn.SendJSONMessageNoResponse(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.handleFalcoConfigRequest - error during falco_config.get submit")
 		return
 	}
 }
@@ -1041,8 +352,6 @@ func (a *agent) handleRefreshChecksRequest(req client.Request) {
 }
 
 func (a *agent) CheckScheduleGet() error {
-	// log.Println("CheckScheduleGet")
-
 	msg := &client.Request{
 		Version:   "1",
 		ID:        "1",
@@ -1058,7 +367,7 @@ func (a *agent) CheckScheduleGet() error {
 		a.log.Err(err).Msg("agent.CheckScheduleGet - error during agent_checks.get")
 		return err
 	}
-	// Wait for the response from the server with the specified timeout
+
 	select {
 	case response, ok := <-responseCh:
 		if !ok {
@@ -1067,7 +376,6 @@ func (a *agent) CheckScheduleGet() error {
 			return err
 		}
 		a.log.Debug().Msgf("agent.CheckScheduleGet - received response for Request ID: %s, Response ID: %s", requestID, response.ID)
-		// a.log.Debug().Msgf("agent.CheckScheduleGet - response: %v", response)
 		if response.Err.Message != "" {
 			err = errors.New(response.Err.Message)
 			a.log.Err(err).Msg("agent.CheckScheduleGet - agent_checks.get failure")
@@ -1090,56 +398,6 @@ func (a *agent) CheckScheduleGet() error {
 	case <-time.After(time.Duration(a.timeout) * time.Second):
 		err = errors.New("agent_checks.get response timeout")
 		a.log.Err(err).Msgf("agent.CheckScheduleGet - response timeout for requestID:%s", requestID)
-		return err
-	}
-	return nil
-}
-
-func (a *agent) GetFalcoRuleFiles() error {
-
-	msg := &client.Request{
-		Version:   "1",
-		ID:        "1",
-		Target:    "agent",
-		Source:    a.AgentID,
-		Tenant:    a.Subdomain,
-		Subdomain: a.Subdomain,
-		Method:    "falco_files.get",
-	}
-
-	requestID, responseCh, err := a.conn.SendJSONMessage(msg)
-	if err != nil {
-		a.log.Err(err).Msg("agent.GetFalcoRuleFiles - error during falco_files.get")
-		return err
-	}
-	// Wait for the response from the server with the specified timeout
-	select {
-	case response, ok := <-responseCh:
-		if !ok {
-			err = errors.New("response channel closed unexpectedly")
-			a.log.Err(err).Msg("agent.GetFalcoRuleFiles - error during falco_files.get response. bailing out.")
-			return err
-		}
-		a.log.Debug().Msgf("agent.GetFalcoRuleFiles - received falco_files.get response for rqid: %s, resp id: %s", requestID, response.ID)
-		if response.Err.Message != "" {
-			err = errors.New(response.Err.Message)
-			a.log.Err(err).Msg("agent.GetFalcoRuleFiles - falco_files.get failure")
-			return err
-		}
-		var falcoFilesGetResult falco_manager.FalcoFilesGetResult
-		err := json.Unmarshal(response.Result, &falcoFilesGetResult)
-		if err != nil {
-			a.log.Err(err).Msg("agent.GetFalcoRuleFiles - error unmarshalling falco_files.get response")
-			return err
-		}
-
-		a.falcoManager.UpdateRuleFiles(falcoFilesGetResult.FalcoFiles)
-		serviceStatus := a.falcoManager.FalcoServiceAgentRunning()
-		a.UpdateFalcoAgentServiceStatus(serviceStatus)
-
-	case <-time.After(time.Duration(a.timeout) * time.Second):
-		err = errors.New("falco_files.get response timeout")
-		a.log.Err(err).Msgf("agent.GetFalcoRuleFiles - response timeout for requestID:%s", requestID)
 		return err
 	}
 	return nil

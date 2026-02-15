@@ -196,7 +196,7 @@ func Setup() {
 		log.Panic().Msgf("Failed to verify agent token, status code: %d", resp.StatusCode)
 	}
 
-	// On successful return, create /etc/alertpriority-agent.conf file
+	// On successful return, create /etc/alertpriority-agent/alertpriority-agent.conf file
 	confContent := fmt.Sprintf(`{
 		"AgentToken": "%s",
 		"AgentID": "%s",
@@ -205,7 +205,7 @@ func Setup() {
 	}`, agentToken, agentID, hostLabel, subdomain)
 
 	// create config directory if it doesn't exist
-	confDir := "/etc/alertpriority"
+	confDir := "/etc/alertpriority-agent"
 	if _, err := os.Stat(confDir); os.IsNotExist(err) {
 		os.MkdirAll(confDir, 0755)
 	}

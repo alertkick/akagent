@@ -72,7 +72,8 @@ bpf/generate:
 ## build: build the application
 .PHONY: build
 build: bpf/generate
-	go build -o=build/${BINARY_NAME} ${MAIN_PACKAGE_PATH}
+	$(eval VERSION := $(shell ./version.sh))
+	go build -ldflags="-X main.Version=$(VERSION) -X apagent/ebpf.agentVersion=$(VERSION)" -o=build/${BINARY_NAME} ${MAIN_PACKAGE_PATH}
 
 ## run: run the  application
 .PHONY: run
@@ -111,7 +112,9 @@ clean:
 	rm -rf build
 
 .PHONY: package
-package: clean build
+package: clean
+	./version.sh -b
+	$(MAKE) build
 	cmake -H. -Bbuild
 	cmake --build build -- package
 

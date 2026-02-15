@@ -8,10 +8,7 @@ import (
 type AgentType string
 
 const (
-	AgentTypeFalco    AgentType = "falco"
-	AgentTypeTetragon AgentType = "tetragon"
-	AgentTypePixie    AgentType = "pixie"
-	AgentTypeNative   AgentType = "native"
+	AgentTypeNative AgentType = "native"
 )
 
 // String returns the string representation of the agent type

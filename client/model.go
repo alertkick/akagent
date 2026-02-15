@@ -63,17 +63,6 @@ type HeartbeatMessage struct {
 	Status    string `json:"status"`
 }
 
-type FalcoEventsPost struct {
-	ID        string          `json:"id" bson:"id"`
-	Version   string          `json:"v" bson:"v"`
-	Timestamp int64           `json:"timestamp"`
-	Params    json.RawMessage `json:"params" bson:"params"`
-	Source    string          `json:"source" bson:"source"`
-	Tenant    string          `json:"tenant" bson:"tenant"`
-	Subdomain string          `json:"subdomain" bson:"subdomain"`
-	Method    string          `json:"method" bson:"method"`
-}
-
 // SecurityEventsPost represents a unified security event post from any eBPF agent
 type SecurityEventsPost struct {
 	ID        string          `json:"id" bson:"id"`
@@ -85,6 +74,26 @@ type SecurityEventsPost struct {
 	Subdomain string          `json:"subdomain" bson:"subdomain"`
 	Method    string          `json:"method" bson:"method"`
 	AgentType string          `json:"agent_type" bson:"agent_type"`
+}
+
+// SecurityEventsBatchParams contains the batch-specific parameters
+type SecurityEventsBatchParams struct {
+	EventCount int    `json:"event_count"` // Number of events in batch
+	Compressed bool   `json:"compressed"`  // Whether payload is gzip compressed
+	Payload    string `json:"payload"`     // Base64 encoded (compressed) JSON array of events
+	AgentType  string `json:"agent_type"`  // Type of agent sending events
+}
+
+// SecurityEventsBatchPost represents a batch of security events with optional compression
+type SecurityEventsBatchPost struct {
+	ID        string          `json:"id" bson:"id"`
+	Version   string          `json:"v" bson:"v"`
+	Timestamp int64           `json:"timestamp"`
+	Params    json.RawMessage `json:"params" bson:"params"` // Contains SecurityEventsBatchParams
+	Source    string          `json:"source" bson:"source"`
+	Tenant    string          `json:"tenant" bson:"tenant"`
+	Subdomain string          `json:"subdomain" bson:"subdomain"`
+	Method    string          `json:"method" bson:"method"`
 }
 
 // EBPFAgentResponse represents the response for eBPF agent operations
@@ -128,91 +137,28 @@ type EBPFAgentInfo struct {
 	RulesDir      string   `json:"rules_dir,omitempty"`
 }
 
-type FalcoToggleStatus struct {
-	Enabled       bool   `json:"enabled"`
-	ServiceStatus string `json:"service_status"`
-	Error         string `json:"error"`
-}
-
-func (f FalcoToggleStatus) String() string {
-	s, _ := json.Marshal(f)
-	return string(s)
-}
-
 type GeneralCommandResponse struct {
 	Message string `json:"message"`
 	Status  string `json:"status"`
 	Error   string `json:"error"`
 }
 
+// UpdateAgentProgressResponse represents a progress update during an agent update
+type UpdateAgentProgressResponse struct {
+	Stage   string `json:"stage"`   // pending, downloading, installing, restarting, completed, failed, rolled_back
+	Message string `json:"message"`
+	Percent int    `json:"percent"`
+	Status  string `json:"status"` // in_progress, success, failed
+	Error   string `json:"error,omitempty"`
+}
+
+func (u UpdateAgentProgressResponse) String() string {
+	s, _ := json.Marshal(u)
+	return string(s)
+}
+
 func (g GeneralCommandResponse) String() string {
 	s, _ := json.Marshal(g)
-	return string(s)
-}
-
-// FalcoServiceResponse represents the response for Falco service operations
-type FalcoServiceResponse struct {
-	Action        string `json:"action"`         // start, stop, restart, status
-	Status        string `json:"status"`         // success, failed
-	ServiceStatus string `json:"service_status"` // running, stopped, unknown
-	Message       string `json:"message"`
-	Error         string `json:"error,omitempty"`
-}
-
-func (f FalcoServiceResponse) String() string {
-	s, _ := json.Marshal(f)
-	return string(s)
-}
-
-// FalcoLogsResponse represents the response for Falco logs request
-type FalcoLogsResponse struct {
-	Logs    string `json:"logs"`
-	Lines   int    `json:"lines"`
-	Status  string `json:"status"` // success, failed
-	Error   string `json:"error,omitempty"`
-	Message string `json:"message,omitempty"`
-}
-
-func (f FalcoLogsResponse) String() string {
-	s, _ := json.Marshal(f)
-	return string(s)
-}
-
-// FalcoConfigFile represents a single config file
-type FalcoConfigFile struct {
-	Path    string `json:"path"`
-	Name    string `json:"name"`
-	Content string `json:"content"`
-	Size    int64  `json:"size"`
-	IsDir   bool   `json:"is_dir"`
-}
-
-// FalcoConfigResponse represents the response for Falco config get request
-type FalcoConfigResponse struct {
-	Status        string            `json:"status"` // success, failed
-	ConfigFiles   []FalcoConfigFile `json:"config_files"`
-	FolderListing []FalcoConfigFile `json:"folder_listing"`
-	Error         string            `json:"error,omitempty"`
-	Message       string            `json:"message,omitempty"`
-}
-
-func (f FalcoConfigResponse) String() string {
-	s, _ := json.Marshal(f)
-	return string(s)
-}
-
-// FalcoConfigTestResponse represents the response for Falco config test request
-type FalcoConfigTestResponse struct {
-	Status   string `json:"status"` // success, failed
-	Valid    bool   `json:"valid"`
-	Output   string `json:"output"`
-	Error    string `json:"error,omitempty"`
-	Message  string `json:"message,omitempty"`
-	ExitCode int    `json:"exit_code"`
-}
-
-func (f FalcoConfigTestResponse) String() string {
-	s, _ := json.Marshal(f)
 	return string(s)
 }
 
@@ -277,6 +223,10 @@ type NativeAgentConfig struct {
 	EnableKernel     bool `json:"enable_kernel" yaml:"enable_kernel"`
 	EnableMemory     bool `json:"enable_memory" yaml:"enable_memory"`
 
+	// ---- Derived Category Filtering ----
+	EnableCaps      bool `json:"enable_caps" yaml:"enable_caps"`
+	EnableNamespace bool `json:"enable_namespace" yaml:"enable_namespace"`
+
 	// ---- Event Enrichment ----
 	EnableEnrichment          bool `json:"enable_enrichment" yaml:"enable_enrichment"`
 	EnrichmentCacheTTLSeconds int  `json:"enrichment_cache_ttl_seconds,omitempty" yaml:"enrichment_cache_ttl_seconds,omitempty"`
@@ -285,8 +235,8 @@ type NativeAgentConfig struct {
 	EnableAlerts bool                     `json:"enable_alerts" yaml:"enable_alerts"`
 	AlertRules   []NativeAgentAlertRule   `json:"alert_rules,omitempty" yaml:"alert_rules,omitempty"`
 
-	// ---- Compliance Profile ----
-	ComplianceProfile string `json:"compliance_profile,omitempty" yaml:"compliance_profile,omitempty"` // "pci-dss-4.0", "sox", "custom"
+	// ---- Compliance Profiles ----
+	ComplianceProfiles []string `json:"compliance_profiles,omitempty" yaml:"compliance_profiles,omitempty"` // ["pci-dss-4.0", "sox"]
 }
 
 // NativeAgentAlertRule represents an alert rule configuration from apweb
@@ -313,6 +263,13 @@ type NativeAgentRuleCondition struct {
 	PrivilegeEscalationToRoot bool     `json:"privilege_escalation_to_root,omitempty" yaml:"privilege_escalation_to_root,omitempty"`
 }
 
+// NativeConfigGetStoredResult is the response when fetching stored config from server
+type NativeConfigGetStoredResult struct {
+	Config    *NativeAgentConfig `json:"config"`
+	UpdatedAt *string            `json:"updated_at,omitempty"`
+	Found     bool               `json:"found"`
+}
+
 // NativeAgentStatusPost represents the native agent status sent to apweb
 type NativeAgentStatusPost struct {
 	ID        string          `json:"id"`
@@ -327,14 +284,22 @@ type NativeAgentStatusPost struct {
 
 // NativeAgentStatus represents the current status of the native agent
 type NativeAgentStatus struct {
-	Enabled       bool     `json:"enabled"`
-	Running       bool     `json:"running"`
-	Listening     bool     `json:"listening"`
-	Version       string   `json:"version"`
-	ConfigPath    string   `json:"config_path"`
-	FilterStats   FilterStats   `json:"filter_stats"`
-	AlertStats    AlertStats    `json:"alert_stats"`
-	Categories    CategoryStats `json:"categories"`
+	Enabled          bool              `json:"enabled"`
+	Running          bool              `json:"running"`
+	Listening        bool              `json:"listening"`
+	Version          string            `json:"version"`
+	ConfigPath       string            `json:"config_path"`
+	FilterStats      FilterStats       `json:"filter_stats"`
+	AlertStats       AlertStats        `json:"alert_stats"`
+	RateLimiterStats RateLimiterStats  `json:"rate_limiter_stats"`
+	Categories       CategoryStats     `json:"categories"`
+}
+
+// RateLimiterStats represents per-rule rate limiting statistics
+type RateLimiterStats struct {
+	Enabled      bool   `json:"enabled"`
+	TotalAllowed uint64 `json:"total_allowed"`
+	TotalDropped uint64 `json:"total_dropped"`
 }
 
 // FilterStats represents filtering statistics

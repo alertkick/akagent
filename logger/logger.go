@@ -37,9 +37,10 @@ const (
 	SectionConnection = "connection"
 	SectionHeartbeat  = "heartbeat"
 	SectionMetrics    = "metrics"
-	SectionFalco      = "falco"
+	SectionSecurity   = "security"
 	SectionAuth       = "auth"
 	SectionProtocol   = "protocol"
+	SectionEBPF       = "ebpf"
 )
 
 func init() {
@@ -49,7 +50,7 @@ func init() {
 	}
 
 	// Parse LOG_SECTIONS environment variable (comma-separated)
-	// Example: LOG_SECTIONS=metrics,falco,heartbeat
+	// Example: LOG_SECTIONS=metrics,security,heartbeat
 	// Use LOG_SECTIONS=all to enable all sections
 	sectionsEnv := os.Getenv("LOG_SECTIONS")
 	if sectionsEnv != "" {

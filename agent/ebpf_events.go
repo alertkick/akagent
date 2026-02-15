@@ -5,89 +5,292 @@ import (
 	"apagent/ebpf"
 	"apagent/internal/api"
 	"apagent/logger"
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog"
 )
 
-// StartEBPFEventSender starts processing events from all enabled eBPF agents
+// eventGroup tracks a group of deduplicated events sharing the same key.
+type eventGroup struct {
+	representative ebpf.SecurityEvent
+	count          int
+	firstSeen      time.Time
+	lastSeen       time.Time
+}
+
+// EventDeduplicator groups identical events within a batch window.
+// NOT thread-safe — owned by the single StartEBPFEventSender goroutine.
+type EventDeduplicator struct {
+	currentWindow  map[string]*eventGroup
+	suppressedKeys map[string]struct{}
+	log            zerolog.Logger
+}
+
+// NewEventDeduplicator creates a new EventDeduplicator.
+func NewEventDeduplicator(log zerolog.Logger) *EventDeduplicator {
+	return &EventDeduplicator{
+		currentWindow:  make(map[string]*eventGroup),
+		suppressedKeys: make(map[string]struct{}),
+		log:            log,
+	}
+}
+
+// Add records an event in the current deduplication window.
+func (d *EventDeduplicator) Add(event ebpf.SecurityEvent) {
+	key := event.DeduplicationKey()
+	if group, exists := d.currentWindow[key]; exists {
+		group.count++
+		if event.Timestamp.After(group.lastSeen) {
+			group.lastSeen = event.Timestamp
+		}
+		if event.Timestamp.Before(group.firstSeen) {
+			group.firstSeen = event.Timestamp
+		}
+	} else {
+		d.currentWindow[key] = &eventGroup{
+			representative: event,
+			count:          1,
+			firstSeen:      event.Timestamp,
+			lastSeen:       event.Timestamp,
+		}
+	}
+}
+
+// Flush returns deduplicated events and resets the current window.
+// Events with count > 1 have their aggregation fields populated.
+func (d *EventDeduplicator) Flush() []ebpf.SecurityEvent {
+	if len(d.currentWindow) == 0 {
+		// No events this window — evict all previously suppressed keys
+		d.suppressedKeys = make(map[string]struct{})
+		return nil
+	}
+
+	result := make([]ebpf.SecurityEvent, 0, len(d.currentWindow))
+	newSuppressed := make(map[string]struct{})
+	rawCount := 0
+
+	for key, group := range d.currentWindow {
+		rawCount += group.count
+		event := group.representative
+		if group.count > 1 {
+			event.AggregatedCount = group.count
+			first := group.firstSeen
+			last := group.lastSeen
+			event.FirstOccurrence = &first
+			event.LastOccurrence = &last
+			newSuppressed[key] = struct{}{}
+		}
+		result = append(result, event)
+	}
+
+	if rawCount > len(result) {
+		d.log.Info().Msgf("agent.EventDeduplicator - %d raw events deduplicated to %d", rawCount, len(result))
+	}
+
+	d.suppressedKeys = newSuppressed
+	d.currentWindow = make(map[string]*eventGroup)
+	return result
+}
+
+const (
+	// BatchInterval is how often to send batched events
+	BatchInterval = 30 * time.Second
+	// MaxBatchSize is the maximum number of events before force flush
+	MaxBatchSize = 500
+	// HighPriorityFlushThreshold - flush immediately if this many high priority events
+	HighPriorityFlushThreshold = 5
+)
+
+// StartEBPFEventSender starts processing events from the native eBPF agent
 func (a *agent) StartEBPFEventSender(shutdown chan struct{}, wg *sync.WaitGroup) {
-	a.log.Info().Msg("agent.StartEBPFEventSender - starting")
+	a.log.Info().Msg("agent.StartEBPFEventSender - starting with batch mode (30s interval)")
 	defer wg.Done()
 
-	ticker := time.NewTicker(60 * time.Second)
-	defer ticker.Stop()
+	batchTicker := time.NewTicker(BatchInterval)
+	defer batchTicker.Stop()
+
+	statusTicker := time.NewTicker(60 * time.Second)
+	defer statusTicker.Stop()
+
+	// Get event channel from native agent
+	var eventChan <-chan ebpf.SecurityEvent
+	if a.nativeAgent != nil {
+		eventChan = a.nativeAgent.EventChannel()
+	}
+
+	// Event batch buffer (high-priority events go here directly)
+	eventBatch := make([]ebpf.SecurityEvent, 0, MaxBatchSize)
+	highPriorityCount := 0
+
+	// Deduplicator for non-high-priority events
+	dedup := NewEventDeduplicator(a.log)
 
 	for {
 		select {
 		case <-shutdown:
-			a.log.Info().Msg("agent.StartEBPFEventSender - stopping")
+			a.log.Info().Msg("agent.StartEBPFEventSender - stopping, flushing remaining events")
+			// Flush dedup buffer before final send
+			if dedupedEvents := dedup.Flush(); len(dedupedEvents) > 0 {
+				eventBatch = append(eventBatch, dedupedEvents...)
+			}
+			if len(eventBatch) > 0 && a.conn.IsConnected() {
+				a.sendEventBatch(eventBatch)
+			}
 			return
-		case <-ticker.C:
-			if a.conn.IsConnected() {
-				a.processQueuedSecurityEvents()
-			} else {
-				a.log.Warn().Msg("agent.StartEBPFEventSender - not connected to endpoint, skipping event sending")
-				if logger.IsSectionEnabled(logger.SectionFalco) {
-					a.log.Debug().Msgf("agent.StartEBPFEventSender - queue size: %d", len(a.securityEventQueue))
+
+		case <-batchTicker.C:
+			// Flush dedup buffer and merge into batch
+			if dedupedEvents := dedup.Flush(); len(dedupedEvents) > 0 {
+				eventBatch = append(eventBatch, dedupedEvents...)
+			}
+
+			// Periodic batch flush
+			if len(eventBatch) > 0 {
+				if a.conn.IsConnected() {
+					if logger.IsSectionEnabled(logger.SectionEBPF) {
+						a.log.Debug().Msgf("agent.StartEBPFEventSender - batch ticker: flushing %d events", len(eventBatch))
+					}
+					a.sendEventBatch(eventBatch)
+					eventBatch = eventBatch[:0] // Reset slice but keep capacity
+					highPriorityCount = 0
+				} else {
+					a.log.Warn().Msgf("agent.StartEBPFEventSender - not connected, holding %d events", len(eventBatch))
 				}
 			}
-			// Update service status for all enabled agents
-			a.updateAllAgentServiceStatus()
-		case event := <-a.ebpfManager.EventChannel():
-			if logger.IsSectionEnabled(logger.SectionFalco) {
-				a.log.Debug().Msgf("agent.StartEBPFEventSender - received event from %s: %s", event.AgentType, event.Rule)
+
+		case <-statusTicker.C:
+			// Update service status periodically
+			a.updateNativeAgentServiceStatus()
+
+		case event := <-eventChan:
+			if logger.IsSectionEnabled(logger.SectionEBPF) {
+				a.log.Debug().Msgf("agent.StartEBPFEventSender - received event: %s (pid=%d)", event.Rule, event.Process.PID)
 			}
-			a.queueSecurityEvent(event)
-			if a.conn.IsConnected() {
-				a.processQueuedSecurityEvents()
+
+			// High-priority events bypass dedup and go directly into the batch
+			if event.IsHighPriority() {
+				eventBatch = append(eventBatch, event)
+				highPriorityCount++
 			} else {
-				a.log.Warn().Msg("agent.StartEBPFEventSender - not connected to endpoint, event queued for later sending")
+				dedup.Add(event)
+			}
+
+			// Force flush conditions:
+			// 1. Batch is full
+			// 2. Too many high priority events (security-critical)
+			shouldFlush := len(eventBatch) >= MaxBatchSize ||
+				highPriorityCount >= HighPriorityFlushThreshold
+
+			if shouldFlush && a.conn.IsConnected() {
+				// Flush dedup buffer and merge before sending
+				if dedupedEvents := dedup.Flush(); len(dedupedEvents) > 0 {
+					eventBatch = append(eventBatch, dedupedEvents...)
+				}
+				if logger.IsSectionEnabled(logger.SectionEBPF) {
+					a.log.Debug().Msgf("agent.StartEBPFEventSender - force flush: %d events (high_priority=%d)",
+						len(eventBatch), highPriorityCount)
+				}
+				a.sendEventBatch(eventBatch)
+				eventBatch = eventBatch[:0]
+				highPriorityCount = 0
 			}
 		}
 	}
 }
 
-func (a *agent) queueSecurityEvent(event ebpf.SecurityEvent) {
-	a.securityEventQueueMutex.Lock()
-	defer a.securityEventQueueMutex.Unlock()
-
-	if len(a.securityEventQueue) >= a.securityEventMaxQueueSize {
-		// Remove the oldest event if the queue is full
-		a.securityEventQueue = a.securityEventQueue[1:]
+// sendEventBatch sends a batch of events with gzip compression
+func (a *agent) sendEventBatch(events []ebpf.SecurityEvent) error {
+	if len(events) == 0 {
+		return nil
 	}
-	a.securityEventQueue = append(a.securityEventQueue, event)
+
+	// Marshal events to JSON
+	eventsJSON, err := json.Marshal(events)
+	if err != nil {
+		a.log.Err(err).Msg("agent.sendEventBatch - failed to marshal events")
+		return err
+	}
+
+	originalSize := len(eventsJSON)
+
+	// Compress with gzip
+	var compressedBuf bytes.Buffer
+	gzWriter := gzip.NewWriter(&compressedBuf)
+	_, err = gzWriter.Write(eventsJSON)
+	if err != nil {
+		a.log.Err(err).Msg("agent.sendEventBatch - failed to compress events")
+		gzWriter.Close()
+		return err
+	}
+	gzWriter.Close()
+
+	compressedSize := compressedBuf.Len()
+	compressionRatio := float64(compressedSize) / float64(originalSize) * 100
+
+	// Base64 encode the compressed data
+	payload := base64.StdEncoding.EncodeToString(compressedBuf.Bytes())
+
+	if logger.IsSectionEnabled(logger.SectionEBPF) {
+		a.log.Debug().Msgf("agent.sendEventBatch - sending %d events, original=%d bytes, compressed=%d bytes (%.1f%%)",
+			len(events), originalSize, compressedSize, compressionRatio)
+	}
+
+	// Determine agent type from first event
+	agentType := "native"
+	if len(events) > 0 {
+		agentType = string(events[0].AgentType)
+	}
+
+	// Create batch params and marshal to JSON
+	batchParams := client.SecurityEventsBatchParams{
+		EventCount: len(events),
+		Compressed: true,
+		Payload:    payload,
+		AgentType:  agentType,
+	}
+	paramsJSON, err := json.Marshal(batchParams)
+	if err != nil {
+		a.log.Err(err).Msg("agent.sendEventBatch - failed to marshal batch params")
+		return err
+	}
+
+	msg := client.SecurityEventsBatchPost{
+		ID:        "1",
+		Version:   "1",
+		Timestamp: time.Now().Unix(),
+		Source:    a.AgentID,
+		Tenant:    a.Subdomain,
+		Subdomain: a.Subdomain,
+		Method:    "security_events.batch_post",
+		Params:    paramsJSON,
+	}
+
+	// Debug: log the params being sent
+	a.log.Debug().
+		Int("params_len", len(paramsJSON)).
+		Int("event_count", len(events)).
+		Msg("agent.sendEventBatch - sending batch with params")
+
+	err = a.conn.SecurityEventsBatchPost(msg)
+	if err != nil {
+		if errors.Is(err, client.ErrNotConnected) {
+			a.log.Warn().Msg("agent.sendEventBatch - not connected, events will be lost")
+			return nil
+		}
+		a.log.Err(err).Msg("agent.sendEventBatch - error sending batch")
+		return err
+	}
+
+	return nil
 }
 
-func (a *agent) processQueuedSecurityEvents() {
-	a.securityEventQueueMutex.Lock()
-	defer a.securityEventQueueMutex.Unlock()
-
-	if len(a.securityEventQueue) == 0 {
-		if logger.IsSectionEnabled(logger.SectionFalco) {
-			a.log.Debug().Msg("agent.processQueuedSecurityEvents - no security events to process")
-		}
-		return
-	}
-
-	if logger.IsSectionEnabled(logger.SectionFalco) {
-		a.log.Debug().Msgf("agent.processQueuedSecurityEvents - processing %d security events", len(a.securityEventQueue))
-	}
-
-	for len(a.securityEventQueue) > 0 {
-		event := a.securityEventQueue[0]
-		err := a.SendSecurityEvent(event)
-		if err != nil {
-			// If sending fails, stop processing and keep events in queue
-			a.log.Warn().Err(err).Msg("agent.processQueuedSecurityEvents - failed to send security event, will retry later")
-			return
-		}
-		// Remove the sent event from the queue
-		a.securityEventQueue = a.securityEventQueue[1:]
-	}
-}
-
+// Legacy single event sending (kept for backwards compatibility)
 func (a *agent) SendSecurityEvent(event ebpf.SecurityEvent) error {
 	// Convert unified event to JSON
 	eventJSON, err := json.Marshal(event)
@@ -119,17 +322,27 @@ func (a *agent) SendSecurityEvent(event ebpf.SecurityEvent) error {
 	return err
 }
 
-func (a *agent) updateAllAgentServiceStatus() {
-	if a.ebpfManager == nil {
+func (a *agent) updateNativeAgentServiceStatus() {
+	if a.nativeAgent == nil {
 		return
 	}
 
-	infos := a.ebpfManager.GetAllAgentInfo()
-	for _, info := range infos {
-		if info.Installed && info.Enabled {
-			a.UpdateEBPFAgentServiceStatus(string(info.Type), info.ServiceStatus)
-		}
+	status, err := a.nativeAgent.GetServiceStatus()
+	if err != nil {
+		a.log.Warn().Err(err).Msg("agent.updateNativeAgentServiceStatus - failed to get service status")
+		return
 	}
+
+	statusStr := "unknown"
+	if status.Running {
+		statusStr = "running"
+	} else if status.ActiveState == "inactive" || status.ActiveState == "embedded" {
+		statusStr = "stopped"
+	} else if status.ActiveState != "" {
+		statusStr = status.ActiveState + "/" + status.SubState
+	}
+
+	a.UpdateEBPFAgentServiceStatus("native", statusStr)
 }
 
 // UpdateEBPFAgentServiceStatus sends the service status for an eBPF agent
@@ -154,8 +367,8 @@ func (a *agent) UpdateEBPFAgentServiceStatus(agentType string, status string) {
 		Subdomain: a.Subdomain,
 		Method:    "ebpf_agent.service_status.post",
 		Params: api.CheckMetricParams{
-			CheckID: "ebpf_agent.service_status",
-			State:   status,
+			CheckID:       "ebpf_agent.service_status",
+			State:         status,
 			InventoryData: paramsJSON,
 		},
 	}
@@ -166,38 +379,37 @@ func (a *agent) UpdateEBPFAgentServiceStatus(agentType string, status string) {
 	}
 }
 
-// GetEBPFAgentsInfo returns information about all eBPF agents
-func (a *agent) GetEBPFAgentsInfo() []ebpf.AgentInfo {
-	if a.ebpfManager == nil {
+// GetNativeAgentInfo returns information about the native eBPF agent
+func (a *agent) GetNativeAgentInfo() *ebpf.AgentInfo {
+	if a.nativeAgent == nil {
 		return nil
 	}
-	return a.ebpfManager.GetAllAgentInfo()
+	info := ebpf.GetInfo(a.nativeAgent)
+	return &info
 }
 
-// EnableEBPFAgent enables a specific eBPF agent
-func (a *agent) EnableEBPFAgent(agentType string) error {
-	if a.ebpfManager == nil {
-		return errors.New("ebpf manager not initialized")
+// EnableNativeAgent enables the native eBPF agent
+func (a *agent) EnableNativeAgent() error {
+	if a.nativeAgent == nil {
+		return errors.New("native agent not initialized")
 	}
 
-	at, err := ebpf.AgentTypeFromString(agentType)
-	if err != nil {
+	if err := a.nativeAgent.Start(a.ctx); err != nil {
 		return err
 	}
 
-	return a.ebpfManager.EnableAgent(a.ctx, at)
+	return a.nativeAgent.StartEventListener(a.ctx)
 }
 
-// DisableEBPFAgent disables a specific eBPF agent
-func (a *agent) DisableEBPFAgent(agentType string) error {
-	if a.ebpfManager == nil {
-		return errors.New("ebpf manager not initialized")
+// DisableNativeAgent disables the native eBPF agent
+func (a *agent) DisableNativeAgent() error {
+	if a.nativeAgent == nil {
+		return errors.New("native agent not initialized")
 	}
 
-	at, err := ebpf.AgentTypeFromString(agentType)
-	if err != nil {
+	if err := a.nativeAgent.StopEventListener(); err != nil {
 		return err
 	}
 
-	return a.ebpfManager.DisableAgent(a.ctx, at)
+	return a.nativeAgent.Stop(a.ctx)
 }

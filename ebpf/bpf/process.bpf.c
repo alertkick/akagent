@@ -6,17 +6,15 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 #include "common.h"
+#include "discarders.h"
+#include "output.h"
 
 char LICENSE[] SEC("license") = "Dual MIT/GPL";
 
 // Force BTF export
 struct process_event *unused_process_event __attribute__((unused));
 
-// Ring buffer for process events
-struct {
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 256 * 1024);
-} process_events SEC(".maps");
+DECLARE_EVENT_OUTPUT(process_events, struct process_event, 256 * 1024);
 
 // Helper to fill common fields
 static __always_inline void fill_common_proc(struct process_event *event, __u32 event_type) {
@@ -52,7 +50,15 @@ SEC("tracepoint/syscalls/sys_enter_clone")
 int tracepoint__syscalls__sys_enter_clone(struct trace_event_raw_sys_enter *ctx) {
     struct process_event *event;
 
-    event = bpf_ringbuf_reserve(&process_events, sizeof(*event), 0);
+    // In-kernel discard check
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 tgid = (u32)(pid_tgid >> 32);
+    char comm[TASK_COMM_LEN] = {};
+    bpf_get_current_comm(&comm, sizeof(comm));
+    if (should_discard(DISCARD_CAT_PROCESS, tgid, comm))
+        return 0;
+
+    event = EVENT_OUTPUT_BEGIN(process_events, struct process_event);
     if (!event)
         return 0;
 
@@ -61,7 +67,7 @@ int tracepoint__syscalls__sys_enter_clone(struct trace_event_raw_sys_enter *ctx)
     // args[0] = clone_flags
     event->clone_flags = ctx->args[0];
 
-    bpf_ringbuf_submit(event, 0);
+    EVENT_OUTPUT_END(process_events, event, struct process_event, ctx);
     return 0;
 }
 
@@ -70,7 +76,15 @@ SEC("tracepoint/syscalls/sys_enter_kill")
 int tracepoint__syscalls__sys_enter_kill(struct trace_event_raw_sys_enter *ctx) {
     struct process_event *event;
 
-    event = bpf_ringbuf_reserve(&process_events, sizeof(*event), 0);
+    // In-kernel discard check
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 tgid = (u32)(pid_tgid >> 32);
+    char comm[TASK_COMM_LEN] = {};
+    bpf_get_current_comm(&comm, sizeof(comm));
+    if (should_discard(DISCARD_CAT_PROCESS, tgid, comm))
+        return 0;
+
+    event = EVENT_OUTPUT_BEGIN(process_events, struct process_event);
     if (!event)
         return 0;
 
@@ -80,7 +94,7 @@ int tracepoint__syscalls__sys_enter_kill(struct trace_event_raw_sys_enter *ctx) 
     event->target_pid = (__u32)ctx->args[0];
     event->sig = (__s32)ctx->args[1];
 
-    bpf_ringbuf_submit(event, 0);
+    EVENT_OUTPUT_END(process_events, event, struct process_event, ctx);
     return 0;
 }
 
@@ -89,7 +103,15 @@ SEC("tracepoint/syscalls/sys_enter_ptrace")
 int tracepoint__syscalls__sys_enter_ptrace(struct trace_event_raw_sys_enter *ctx) {
     struct process_event *event;
 
-    event = bpf_ringbuf_reserve(&process_events, sizeof(*event), 0);
+    // In-kernel discard check
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 tgid = (u32)(pid_tgid >> 32);
+    char comm[TASK_COMM_LEN] = {};
+    bpf_get_current_comm(&comm, sizeof(comm));
+    if (should_discard(DISCARD_CAT_PROCESS, tgid, comm))
+        return 0;
+
+    event = EVENT_OUTPUT_BEGIN(process_events, struct process_event);
     if (!event)
         return 0;
 
@@ -99,6 +121,62 @@ int tracepoint__syscalls__sys_enter_ptrace(struct trace_event_raw_sys_enter *ctx
     event->ptrace_request = (__s32)ctx->args[0];
     event->target_pid = (__u32)ctx->args[1];
 
-    bpf_ringbuf_submit(event, 0);
+    EVENT_OUTPUT_END(process_events, event, struct process_event, ctx);
+    return 0;
+}
+
+// Tracepoint for sys_enter_tgkill
+// tgkill(int tgid, int tid, int sig) - thread-group directed signal
+SEC("tracepoint/syscalls/sys_enter_tgkill")
+int tracepoint__syscalls__sys_enter_tgkill(struct trace_event_raw_sys_enter *ctx) {
+    struct process_event *event;
+
+    // In-kernel discard check
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 tgid = (u32)(pid_tgid >> 32);
+    char comm[TASK_COMM_LEN] = {};
+    bpf_get_current_comm(&comm, sizeof(comm));
+    if (should_discard(DISCARD_CAT_PROCESS, tgid, comm))
+        return 0;
+
+    event = EVENT_OUTPUT_BEGIN(process_events, struct process_event);
+    if (!event)
+        return 0;
+
+    fill_common_proc(event, EVENT_TYPE_TGKILL);
+
+    // args[0] = tgid, args[1] = tid, args[2] = sig
+    event->target_pid = (__u32)ctx->args[0];
+    event->sig = (__s32)ctx->args[2];
+
+    EVENT_OUTPUT_END(process_events, event, struct process_event, ctx);
+    return 0;
+}
+
+// Tracepoint for sys_enter_tkill
+// tkill(int tid, int sig) - thread-directed signal
+SEC("tracepoint/syscalls/sys_enter_tkill")
+int tracepoint__syscalls__sys_enter_tkill(struct trace_event_raw_sys_enter *ctx) {
+    struct process_event *event;
+
+    // In-kernel discard check
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 tgid = (u32)(pid_tgid >> 32);
+    char comm[TASK_COMM_LEN] = {};
+    bpf_get_current_comm(&comm, sizeof(comm));
+    if (should_discard(DISCARD_CAT_PROCESS, tgid, comm))
+        return 0;
+
+    event = EVENT_OUTPUT_BEGIN(process_events, struct process_event);
+    if (!event)
+        return 0;
+
+    fill_common_proc(event, EVENT_TYPE_TKILL);
+
+    // args[0] = tid, args[1] = sig
+    event->target_pid = (__u32)ctx->args[0];
+    event->sig = (__s32)ctx->args[1];
+
+    EVENT_OUTPUT_END(process_events, event, struct process_event, ctx);
     return 0;
 }
