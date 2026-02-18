@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"apagent/client"
@@ -605,6 +606,64 @@ func (a *agent) handleRefreshComplianceRequest(req client.Request) {
 		}
 		response.Message = "no profiles assigned, eBPF agent disabled"
 	}
+
+	a.sendRefreshComplianceResponse(req, response)
+}
+
+// handleNativeRulesUpdateRequest handles the native_rules.update command
+// This command pushes compiled YAML detection rules from the API to the agent
+func (a *agent) handleNativeRulesUpdateRequest(req client.Request) {
+	a.log.Info().Msg("agent.handleNativeRulesUpdateRequest - received native_rules.update command")
+
+	response := client.GeneralCommandResponse{
+		Status: "success",
+	}
+
+	// Parse the YAML from command params
+	var rulesPayload struct {
+		YAML      string   `json:"yaml"`
+		Hash      string   `json:"hash"`
+		Policies  []string `json:"policies"`
+		RuleCount int      `json:"ruleCount"`
+	}
+
+	if err := json.Unmarshal(req.Params, &rulesPayload); err != nil {
+		a.log.Error().Err(err).Msg("agent.handleNativeRulesUpdateRequest - failed to parse rules payload")
+		response.Status = "failed"
+		response.Error = "failed to parse rules payload: " + err.Error()
+		a.sendRefreshComplianceResponse(req, response)
+		return
+	}
+
+	if a.nativeAgent == nil {
+		response.Status = "failed"
+		response.Error = "native agent not initialized"
+		a.sendRefreshComplianceResponse(req, response)
+		return
+	}
+
+	// Update the rule engine with the new YAML
+	if err := a.nativeAgent.UpdateRulesFromYAML([]byte(rulesPayload.YAML)); err != nil {
+		a.log.Error().Err(err).Msg("agent.handleNativeRulesUpdateRequest - failed to update rules")
+		response.Status = "failed"
+		response.Error = "failed to update rules: " + err.Error()
+		a.sendRefreshComplianceResponse(req, response)
+		return
+	}
+
+	hashPrefix := rulesPayload.Hash
+	if len(hashPrefix) > 8 {
+		hashPrefix = hashPrefix[:8]
+	}
+
+	response.Message = fmt.Sprintf("rules updated: %d rules from %d policies (hash: %s)",
+		rulesPayload.RuleCount, len(rulesPayload.Policies), hashPrefix)
+
+	a.log.Info().
+		Int("rule_count", rulesPayload.RuleCount).
+		Strs("policies", rulesPayload.Policies).
+		Str("hash", hashPrefix).
+		Msg("agent.handleNativeRulesUpdateRequest - rules updated successfully")
 
 	a.sendRefreshComplianceResponse(req, response)
 }

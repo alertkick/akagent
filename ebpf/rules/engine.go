@@ -84,6 +84,22 @@ type EventContext struct {
 	Direction string
 	DstPort   int
 
+	// Extended event fields (for data-driven rules)
+	Signal    int    // Kill signal number (e.g., 9=SIGKILL, 19=SIGSTOP)
+	TargetPID int    // Target PID for signal events
+	ExitCode  int    // Process exit code
+	NewEUID   int    // New effective UID (credential change)
+	NewEGID   int    // New effective GID (credential change)
+	DataLen   int    // Data transfer size (splice/sendfile)
+	Path      string // VFS/filesystem path
+	SrcPort   int    // Source port for network events
+	Source    string // Event source: "syscall", "kprobe"
+
+	// Time-based fields (populated at evaluation time)
+	DayOfWeek int  // 0=Sunday, 6=Saturday
+	HourOfDay int  // 0-23
+	IsWeekend bool // true if Saturday or Sunday
+
 	// Rule/output info (for API-triggered evaluations)
 	Rule   string
 	Output string
@@ -103,6 +119,7 @@ type RuleEngine struct {
 	profileName    string
 	profileVersion string
 	lastUpdated    time.Time
+	profileLoaded  bool // true once a profile has been explicitly loaded (even if empty)
 
 	// Statistics
 	totalEvaluated uint64
@@ -131,6 +148,7 @@ func (e *RuleEngine) UpdateProfile(config *ProfileConfig) error {
 	e.profileName = config.Metadata.Name
 	e.profileVersion = config.Metadata.Version
 	e.lastUpdated = time.Now()
+	e.profileLoaded = true
 
 	return nil
 }
@@ -275,6 +293,24 @@ func (e *RuleEngine) evalAtomicCondition(expr string, ctx *EventContext) bool {
 		}
 	}
 
+	// Handle "field prefix_in (list)" pattern - checks if any list item is a prefix of the field value
+	// Used for Linux 15-char comm name truncation matching (e.g., "containerd-shim" prefix matches "containerd-shim-runc-v2")
+	if strings.Contains(expr, " prefix_in (") {
+		parts := strings.SplitN(expr, " prefix_in ", 2)
+		if len(parts) == 2 {
+			field := strings.TrimSpace(parts[0])
+			listName := strings.TrimSpace(parts[1])
+			listName = strings.TrimPrefix(listName, "(")
+			listName = strings.TrimSuffix(listName, ")")
+			listName = strings.TrimSpace(listName)
+
+			fieldValue := e.getFieldValue(field, ctx)
+			if s, ok := fieldValue.(string); ok {
+				return e.lists.PrefixMatchString(listName, s)
+			}
+		}
+	}
+
 	// Handle "field contains value" pattern
 	if strings.Contains(expr, " contains ") {
 		parts := strings.SplitN(expr, " contains ", 2)
@@ -383,6 +419,30 @@ func (e *RuleEngine) getFieldValue(field string, ctx *EventContext) interface{} 
 		return ctx.Direction
 	case "dst_port":
 		return ctx.DstPort
+	case "signal":
+		return ctx.Signal
+	case "target_pid":
+		return ctx.TargetPID
+	case "exit_code":
+		return ctx.ExitCode
+	case "new_euid":
+		return ctx.NewEUID
+	case "new_egid":
+		return ctx.NewEGID
+	case "data_len":
+		return ctx.DataLen
+	case "path":
+		return ctx.Path
+	case "src_port":
+		return ctx.SrcPort
+	case "source":
+		return ctx.Source
+	case "day_of_week":
+		return ctx.DayOfWeek
+	case "hour_of_day":
+		return ctx.HourOfDay
+	case "is_weekend":
+		return ctx.IsWeekend
 	case "rule":
 		return ctx.Rule
 	case "output":
@@ -502,4 +562,12 @@ func (e *RuleEngine) IsReady() bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return len(e.rules) > 0
+}
+
+// HasProfile returns true if a profile has been explicitly loaded (even if it contains zero rules).
+// This distinguishes between "no profile assigned yet" and "empty profile pushed by API".
+func (e *RuleEngine) HasProfile() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.profileLoaded
 }

@@ -102,6 +102,24 @@ func (f *FilterLists) MatchesPattern(listName, value string) bool {
 	return false
 }
 
+// PrefixMatchString checks if any item in the named string list is a prefix of the given value
+// This is used for Linux comm name truncation: the kernel truncates comm to 15 chars,
+// so "containerd-shim-runc-v2" becomes "containerd-shim". prefix_in checks if
+// any list item has the value as a prefix of it, or the value starts with any list item.
+func (f *FilterLists) PrefixMatchString(listName, value string) bool {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	if list, ok := f.StringLists[listName]; ok {
+		for item := range list {
+			if strings.HasPrefix(value, item) || strings.HasPrefix(item, value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // GetStringList returns a copy of the named string list
 func (f *FilterLists) GetStringList(name string) []string {
 	f.mu.RLock()

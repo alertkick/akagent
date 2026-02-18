@@ -262,6 +262,11 @@ func NewNativeAgentWithConfig(configPath string) (*NativeEBPFAgent, error) {
 
 	nativeLog.Info().Str("output_mode", agent.outputMode.String()).Msg("Selected BPF output mode")
 
+	// Load persisted detection rules from disk (if any)
+	if err := agent.LoadRulesFromDisk(); err != nil {
+		nativeLog.Warn().Err(err).Msg("Failed to load persisted detection rules")
+	}
+
 	return agent, nil
 }
 
@@ -476,6 +481,9 @@ func (a *NativeEBPFAgent) GetConfigPath() string {
 	return a.configPath
 }
 
+// DefaultRulesPath is the default location for compiled detection rules
+const DefaultRulesPath = "/etc/alertpriority-agent/rules.yaml"
+
 // GetRules returns the rule files (native agent doesn't use external rules)
 func (a *NativeEBPFAgent) GetRules() ([]RuleFile, error) {
 	return nil, nil
@@ -489,6 +497,78 @@ func (a *NativeEBPFAgent) UpdateRules(rules []RuleFile) error {
 // GetRulesDir returns the rules directory (empty for native agent)
 func (a *NativeEBPFAgent) GetRulesDir() string {
 	return ""
+}
+
+// UpdateRulesFromYAML parses compiled YAML rules, updates the rule engine, and persists to disk
+func (a *NativeEBPFAgent) UpdateRulesFromYAML(yamlData []byte) error {
+	// Handle empty YAML — clear all rules
+	if len(yamlData) == 0 {
+		yamlData = []byte("metadata:\n  name: empty\nrules: []\n")
+	}
+
+	profileConfig, err := rules.ParseProfileYAML(yamlData)
+	if err != nil {
+		return fmt.Errorf("failed to parse rules YAML: %w", err)
+	}
+
+	if err := a.ruleEngine.UpdateProfile(profileConfig); err != nil {
+		return fmt.Errorf("failed to update rule engine: %w", err)
+	}
+
+	// Persist to disk for recovery on restart
+	if err := a.saveRulesToDisk(yamlData); err != nil {
+		nativeLog.Warn().Err(err).Msg("Failed to persist rules to disk")
+		// Don't fail - rules are loaded in memory
+	}
+
+	ruleCount := a.ruleEngine.GetRuleCount()
+	nativeLog.Info().
+		Str("profile", profileConfig.Metadata.Name).
+		Int("rules", ruleCount).
+		Int("lists", len(profileConfig.Lists)).
+		Int("macros", len(profileConfig.Macros)).
+		Msg("Updated detection rules from compiled YAML")
+
+	return nil
+}
+
+// LoadRulesFromDisk loads persisted rules on startup
+func (a *NativeEBPFAgent) LoadRulesFromDisk() error {
+	data, err := os.ReadFile(DefaultRulesPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			nativeLog.Debug().Msg("No persisted rules file found, starting with empty rule engine")
+			return nil
+		}
+		return fmt.Errorf("failed to read rules file: %w", err)
+	}
+
+	profileConfig, err := rules.ParseProfileYAML(data)
+	if err != nil {
+		return fmt.Errorf("failed to parse persisted rules: %w", err)
+	}
+
+	if err := a.ruleEngine.UpdateProfile(profileConfig); err != nil {
+		return fmt.Errorf("failed to load persisted rules: %w", err)
+	}
+
+	nativeLog.Info().
+		Str("profile", profileConfig.Metadata.Name).
+		Int("rules", a.ruleEngine.GetRuleCount()).
+		Msg("Loaded persisted detection rules from disk")
+
+	return nil
+}
+
+func (a *NativeEBPFAgent) saveRulesToDisk(yamlData []byte) error {
+	dir := "/etc/alertpriority-agent"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create rules directory: %w", err)
+	}
+	if err := os.WriteFile(DefaultRulesPath, yamlData, 0644); err != nil {
+		return fmt.Errorf("failed to write rules file: %w", err)
+	}
+	return nil
 }
 
 // ServiceName returns the service name (empty for embedded agent)

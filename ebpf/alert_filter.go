@@ -3,6 +3,7 @@ package ebpf
 import (
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"apagent/ebpf/rules"
 )
@@ -86,14 +87,40 @@ func (f *AlertFilter) ShouldAlert(event *SecurityEvent) bool {
 		return true
 	}
 
-	// Always allow high-priority events (Warning and above)
+	// If a rules profile has been loaded from the API, ONLY send events that match
+	// compiled rules. No priority bypass, no hardcoded fallback. This ensures that
+	// when an empty profile is pushed (no policies enabled), the agent goes silent.
+	if f.ruleEngine != nil && f.ruleEngine.HasProfile() {
+		ctx := f.buildEventContext(event)
+		matches := f.ruleEngine.Evaluate(ctx)
+		if len(matches) > 0 {
+			match := matches[0]
+			if event.RawFields == nil {
+				event.RawFields = make(map[string]interface{})
+			}
+			event.RawFields["matched_rule_id"] = match.Rule.RuleID
+			event.RawFields["matched_rule_name"] = match.Rule.Name
+			if match.Rule.Framework != "" {
+				event.RawFields["matched_framework"] = match.Rule.Framework
+			}
+			if len(match.Rule.Tags) > 0 {
+				event.RawFields["matched_tags"] = match.Rule.Tags
+			}
+			atomic.AddUint64(&f.alertedEvents, 1)
+			return true
+		}
+		atomic.AddUint64(&f.droppedEvents, 1)
+		return false
+	}
+
+	// No profile loaded yet — use legacy behavior with priority bypass + hardcoded rules
 	if event.Priority >= PriorityWarning {
 		atomic.AddUint64(&f.alertedEvents, 1)
 		return true
 	}
 
-	// Evaluate against alert rules
-	if f.matchesAlertRules(event) {
+	// Evaluate against hardcoded rules
+	if f.matchesHardcodedRules(event) {
 		atomic.AddUint64(&f.alertedEvents, 1)
 		return true
 	}
@@ -104,12 +131,28 @@ func (f *AlertFilter) ShouldAlert(event *SecurityEvent) bool {
 }
 
 // matchesAlertRules checks if the event matches any enabled alert rules
+// This is only called in the legacy path (no profile loaded from API)
 func (f *AlertFilter) matchesAlertRules(event *SecurityEvent) bool {
-	// Use rule engine if available and has rules loaded
+	// Use rule engine if available and has rules loaded (legacy path: loaded from disk on startup)
 	if f.ruleEngine != nil && f.ruleEngine.IsReady() {
 		ctx := f.buildEventContext(event)
 		matches := f.ruleEngine.Evaluate(ctx)
-		return len(matches) > 0
+		if len(matches) > 0 {
+			// Attach rule metadata to the event for downstream consumers
+			match := matches[0] // Use highest-priority match
+			if event.RawFields == nil {
+				event.RawFields = make(map[string]interface{})
+			}
+			event.RawFields["matched_rule_id"] = match.Rule.RuleID
+			event.RawFields["matched_rule_name"] = match.Rule.Name
+			if match.Rule.Framework != "" {
+				event.RawFields["matched_framework"] = match.Rule.Framework
+			}
+			if len(match.Rule.Tags) > 0 {
+				event.RawFields["matched_tags"] = match.Rule.Tags
+			}
+			return true
+		}
 	}
 
 	// Fallback to hardcoded rules (when no profile assigned)
@@ -328,6 +371,43 @@ func (f *AlertFilter) buildEventContext(event *SecurityEvent) *rules.EventContex
 	} else if dstPort, ok := event.RawFields["dst_port"].(uint16); ok {
 		ctx.DstPort = int(dstPort)
 	}
+
+	// Extended fields for data-driven rules
+	if sig, ok := event.RawFields["sig"].(int32); ok {
+		ctx.Signal = int(sig)
+	}
+	if targetPID, ok := event.RawFields["target_pid"].(int32); ok {
+		ctx.TargetPID = int(targetPID)
+	}
+	if exitCode, ok := event.RawFields["exit_code"].(int32); ok {
+		ctx.ExitCode = int(exitCode)
+	}
+	if newEUID, ok := event.RawFields["new_euid"].(uint32); ok {
+		ctx.NewEUID = int(newEUID)
+	}
+	if newEGID, ok := event.RawFields["new_egid"].(uint32); ok {
+		ctx.NewEGID = int(newEGID)
+	}
+	if dataLen, ok := event.RawFields["len"].(uint64); ok {
+		ctx.DataLen = int(dataLen)
+	}
+	if path, ok := event.RawFields["path"].(string); ok {
+		ctx.Path = path
+	}
+	if srcPort, ok := event.RawFields["sport"].(uint16); ok {
+		ctx.SrcPort = int(srcPort)
+	} else if srcPort, ok := event.RawFields["sport"].(int); ok {
+		ctx.SrcPort = srcPort
+	}
+
+	// Event source
+	ctx.Source = event.Source
+
+	// Time-based fields for time-of-day rules
+	now := time.Now()
+	ctx.DayOfWeek = int(now.Weekday()) // 0=Sunday
+	ctx.HourOfDay = now.Hour()
+	ctx.IsWeekend = now.Weekday() == time.Saturday || now.Weekday() == time.Sunday
 
 	// Map event types to strings for condition matching
 	if event.Category == "" && event.Syscall.Name != "" {

@@ -246,6 +246,9 @@ func (a *agent) HandleServerRequest(req client.Request) error {
 	case "agent.refresh_compliance":
 		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_compliance request")
 		a.handleRefreshComplianceRequest(req)
+	case "native_rules.update":
+		a.log.Debug().Msg("agent.HandleServerRequest - received native_rules.update request")
+		a.handleNativeRulesUpdateRequest(req)
 	case "update_agent":
 		a.log.Info().Msg("agent.HandleServerRequest - received update_agent request")
 		go a.handleUpdateAgentRequest(req)
