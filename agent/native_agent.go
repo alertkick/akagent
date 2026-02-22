@@ -1,3 +1,5 @@
+//go:build linux
+
 package agent
 
 import (
@@ -13,7 +15,7 @@ import (
 // NativeConfigGetStored fetches the stored native agent config from the API on startup
 // This allows the agent to restore its configuration without relying on local files
 func (a *agent) NativeConfigGetStored() error {
-	if a.nativeAgent == nil {
+	if a.platformData.nativeAgent == nil {
 		a.log.Debug().Msg("agent.NativeConfigGetStored - native agent not initialized, skipping")
 		return nil
 	}
@@ -82,11 +84,11 @@ func (a *agent) NativeConfigGetStored() error {
 
 // GetNativeAgentConfig requests the native agent config from apweb
 func (a *agent) GetNativeAgentConfig() error {
-	if a.nativeAgent == nil {
+	if a.platformData.nativeAgent == nil {
 		return errors.New("native agent not initialized")
 	}
 
-	if !a.nativeAgent.IsInstalled() {
+	if !a.platformData.nativeAgent.IsInstalled() {
 		a.log.Debug().Msg("agent.GetNativeAgentConfig - native agent not installed")
 		return nil
 	}
@@ -158,7 +160,7 @@ func (a *agent) GetNativeAgentConfig() error {
 
 // applyNativeAgentConfig applies the config received from apweb to the native agent
 func (a *agent) applyNativeAgentConfig(webConfig client.NativeAgentConfig) error {
-	if a.nativeAgent == nil {
+	if a.platformData.nativeAgent == nil {
 		return errors.New("native agent not initialized")
 	}
 
@@ -166,7 +168,7 @@ func (a *agent) applyNativeAgentConfig(webConfig client.NativeAgentConfig) error
 	nativeConfig := convertWebConfigToNative(webConfig)
 
 	// Update the native agent config
-	if err := a.nativeAgent.UpdateNativeConfig(nativeConfig); err != nil {
+	if err := a.platformData.nativeAgent.UpdateNativeConfig(nativeConfig); err != nil {
 		return err
 	}
 
@@ -229,7 +231,7 @@ func (a *agent) handleNativeConfigGetRequest(req client.Request) {
 	}
 
 	// Get native agent
-	if a.nativeAgent == nil {
+	if a.platformData.nativeAgent == nil {
 		response.Status = "failed"
 		response.Error = "native agent not initialized"
 		a.sendNativeConfigResponse(req, response)
@@ -237,7 +239,7 @@ func (a *agent) handleNativeConfigGetRequest(req client.Request) {
 	}
 
 	// Get current config
-	config := a.nativeAgent.GetNativeConfig()
+	config := a.platformData.nativeAgent.GetNativeConfig()
 	response.Config = convertNativeConfigToWeb(config)
 
 	a.sendNativeConfigResponse(req, response)
@@ -310,7 +312,7 @@ func (a *agent) handleNativeConfigUpdateRequest(req client.Request) {
 	}
 
 	// Check current running state before applying config
-	wasRunning := a.nativeAgent != nil && a.nativeAgent.IsRunning()
+	wasRunning := a.platformData.nativeAgent != nil && a.platformData.nativeAgent.IsRunning()
 
 	// Apply the config
 	if err := a.applyNativeAgentConfig(webConfig); err != nil {
@@ -431,20 +433,20 @@ func (a *agent) getNativeAgentStatus() client.NativeAgentStatus {
 		ConfigPath: ebpf.DefaultConfigPath,
 	}
 
-	if a.nativeAgent == nil {
+	if a.platformData.nativeAgent == nil {
 		return status
 	}
 
-	status.Enabled = a.nativeAgent.IsRunning()
-	status.Running = a.nativeAgent.IsRunning()
-	status.Listening = a.nativeAgent.IsListening()
+	status.Enabled = a.platformData.nativeAgent.IsRunning()
+	status.Running = a.platformData.nativeAgent.IsRunning()
+	status.Listening = a.platformData.nativeAgent.IsListening()
 
-	version, _ := a.nativeAgent.Version()
+	version, _ := a.platformData.nativeAgent.Version()
 	status.Version = version
-	status.ConfigPath = a.nativeAgent.GetConfigPath()
+	status.ConfigPath = a.platformData.nativeAgent.GetConfigPath()
 
 	// Get filter stats
-	total, filtered := a.nativeAgent.GetFilterStats()
+	total, filtered := a.platformData.nativeAgent.GetFilterStats()
 	status.FilterStats = client.FilterStats{
 		TotalProcessed: total,
 		FilteredOut:    filtered,
@@ -457,7 +459,7 @@ func (a *agent) getNativeAgentStatus() client.NativeAgentStatus {
 	// Leave AlertStats as zero values
 
 	// Get rate limiter stats
-	rlStats := a.nativeAgent.GetRateLimiterStats()
+	rlStats := a.platformData.nativeAgent.GetRateLimiterStats()
 	status.RateLimiterStats = client.RateLimiterStats{
 		Enabled:      rlStats.Enabled,
 		TotalAllowed: rlStats.TotalAllowed,
@@ -465,7 +467,7 @@ func (a *agent) getNativeAgentStatus() client.NativeAgentStatus {
 	}
 
 	// Get category status from config
-	config := a.nativeAgent.GetNativeConfig()
+	config := a.platformData.nativeAgent.GetNativeConfig()
 	status.Categories = client.CategoryStats{
 		Process:    config.EnableProcess,
 		File:       config.EnableFile,
@@ -574,14 +576,14 @@ func (a *agent) handleRefreshComplianceRequest(req client.Request) {
 		a.log.Info().Strs("profiles", resolvedConfig.Metadata.Profiles).Msg("agent.handleRefreshComplianceRequest - profiles assigned, enabling eBPF")
 
 		// Update rule engine with new config
-		if a.nativeAgent != nil {
-			if err := a.nativeAgent.UpdateComplianceConfig(req.Params); err != nil {
+		if a.platformData.nativeAgent != nil {
+			if err := a.platformData.nativeAgent.UpdateComplianceConfig(req.Params); err != nil {
 				a.log.Warn().Err(err).Msg("agent.handleRefreshComplianceRequest - failed to update compliance config")
 				// Continue anyway - we still want to enable eBPF
 			}
 
 			// Enable eBPF if not already running
-			if !a.nativeAgent.IsRunning() {
+			if !a.platformData.nativeAgent.IsRunning() {
 				if err := a.EnableNativeAgent(); err != nil {
 					a.log.Error().Err(err).Msg("agent.handleRefreshComplianceRequest - failed to enable eBPF agent")
 					response.Status = "failed"
@@ -599,7 +601,7 @@ func (a *agent) handleRefreshComplianceRequest(req client.Request) {
 		}
 	} else {
 		a.log.Info().Msg("agent.handleRefreshComplianceRequest - no profiles assigned, disabling eBPF")
-		if a.nativeAgent != nil && a.nativeAgent.IsRunning() {
+		if a.platformData.nativeAgent != nil && a.platformData.nativeAgent.IsRunning() {
 			if err := a.DisableNativeAgent(); err != nil {
 				a.log.Warn().Err(err).Msg("agent.handleRefreshComplianceRequest - failed to disable eBPF agent")
 			}
@@ -635,7 +637,7 @@ func (a *agent) handleNativeRulesUpdateRequest(req client.Request) {
 		return
 	}
 
-	if a.nativeAgent == nil {
+	if a.platformData.nativeAgent == nil {
 		response.Status = "failed"
 		response.Error = "native agent not initialized"
 		a.sendRefreshComplianceResponse(req, response)
@@ -643,7 +645,7 @@ func (a *agent) handleNativeRulesUpdateRequest(req client.Request) {
 	}
 
 	// Update the rule engine with the new YAML
-	if err := a.nativeAgent.UpdateRulesFromYAML([]byte(rulesPayload.YAML)); err != nil {
+	if err := a.platformData.nativeAgent.UpdateRulesFromYAML([]byte(rulesPayload.YAML)); err != nil {
 		a.log.Error().Err(err).Msg("agent.handleNativeRulesUpdateRequest - failed to update rules")
 		response.Status = "failed"
 		response.Error = "failed to update rules: " + err.Error()

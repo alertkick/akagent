@@ -5,7 +5,6 @@ import (
 	"apagent/checks"
 	"apagent/client"
 	"apagent/config"
-	"apagent/ebpf"
 	"apagent/internal/api"
 	"context"
 	"encoding/json"
@@ -57,11 +56,8 @@ type agent struct {
 	// Agent version (injected at build time)
 	version string
 
-	// Native eBPF agent support
-	nativeAgent               *ebpf.NativeEBPFAgent
-	securityEventQueue        []ebpf.SecurityEvent
-	securityEventQueueMutex   sync.Mutex
-	securityEventMaxQueueSize int
+	// Platform-specific fields (populated in agent_ebpf_linux.go)
+	platformData platformAgentData
 }
 
 func NewAgentClient(conf *config.Config, kernalVersion string, log zerolog.Logger, version string) (*agent, error) {
@@ -69,39 +65,39 @@ func NewAgentClient(conf *config.Config, kernalVersion string, log zerolog.Logge
 	RPCConn := client.NewConnection(conf, log, version)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	agent := agent{
-		log:                       log,
-		conn:                      RPCConn,
-		AgentID:                   conf.AgentID,
-		AgentName:                 conf.AgentName,
-		Subdomain:                 conf.Subdomain,
-		Tenant:                    conf.Subdomain,
-		agentToken:                conf.AgentToken,
-		version:                   version,
-		heartbeatInterval:         10,
-		sentHeartbeatCount:        0,
-		timeout:                   10,
-		ctx:                       ctx,
-		cancelFunc:                cancel,
-		checkResultQueue:          make([]api.CheckMetricParams, 0, 1000),
-		securityEventQueue:        make([]ebpf.SecurityEvent, 0, 1000),
-		checkResultMaxQueueSize:   1000,
-		securityEventMaxQueueSize: 1000,
+	a := agent{
+		log:                     log,
+		conn:                    RPCConn,
+		AgentID:                 conf.AgentID,
+		AgentName:               conf.AgentName,
+		Subdomain:               conf.Subdomain,
+		Tenant:                  conf.Subdomain,
+		agentToken:              conf.AgentToken,
+		version:                 version,
+		heartbeatInterval:       10,
+		sentHeartbeatCount:      0,
+		timeout:                 10,
+		ctx:                     ctx,
+		cancelFunc:              cancel,
+		checkResultQueue:        make([]api.CheckMetricParams, 0, 1000),
+		checkResultMaxQueueSize: 1000,
 	}
 
+	a.platformData = newPlatformAgentData()
+
 	if conf.Debug {
-		agent.debug = true
-		agent.log.Debug().Msgf("agent.NewAgentClient - debug value: %t", agent.debug)
+		a.debug = true
+		a.log.Debug().Msgf("agent.NewAgentClient - debug value: %t", a.debug)
 	} else {
-		agent.debug = false
+		a.debug = false
 	}
 
 	// Load any saved check results
-	if err := agent.loadCheckResultQueue(); err != nil {
-		agent.log.Warn().Err(err).Msg("agent.NewAgentClient - failed to load saved check results")
+	if err := a.loadCheckResultQueue(); err != nil {
+		a.log.Warn().Err(err).Msg("agent.NewAgentClient - failed to load saved check results")
 	}
 
-	return &agent, nil
+	return &a, nil
 }
 
 // Run starts the agent
@@ -125,43 +121,18 @@ func (a *agent) Run(shutdown chan struct{}) error {
 	go a.StartResultSender(shutdown, &a.wg)
 	go a.checkerManager.Start()
 
-	// Initialize native eBPF agent (but DO NOT start it - wait for profile)
-	a.log.Info().Msg("agent.Run - initializing native eBPF agent (disabled by default)")
-	nativeAgent, err := ebpf.NewNativeAgent()
-	if err != nil {
-		a.log.Warn().Err(err).Msg("agent.Run - failed to create native eBPF agent")
-	} else {
-		a.nativeAgent = nativeAgent
-		// Only start if explicitly enabled in config (rare - usually profile triggers it)
-		nativeConfig := a.nativeAgent.GetNativeConfig()
-		if nativeConfig.Enabled {
-			if err := a.nativeAgent.Start(ctx); err != nil {
-				a.log.Warn().Err(err).Msg("agent.Run - failed to start native eBPF agent")
-			} else if err := a.nativeAgent.StartEventListener(ctx); err != nil {
-				a.log.Warn().Err(err).Msg("agent.Run - failed to start native eBPF event listener")
-			}
-		} else {
-			a.log.Info().Msg("agent.Run - eBPF agent initialized but not started (waiting for profile)")
-		}
-	}
+	// Initialize platform-specific eBPF agent (Linux only, no-op on other platforms)
+	a.initEBPF(ctx)
 
-	// Start eBPF event sender
+	// Start platform-specific eBPF event sender
 	ebpfShutdown := make(chan struct{})
-	a.wg.Add(1)
-	go a.StartEBPFEventSender(ebpfShutdown, &a.wg)
+	a.startEBPFSender(ebpfShutdown)
 
 	// Wait for shutdown signal
 	<-shutdown
 	close(ebpfShutdown)
-	a.log.Debug().Msg("agent.Run - Shutdown signal received, shutting down native eBPF agent")
-	if a.nativeAgent != nil {
-		if err := a.nativeAgent.StopEventListener(); err != nil {
-			a.log.Warn().Err(err).Msg("agent.Run - error stopping native eBPF event listener")
-		}
-		if err := a.nativeAgent.Stop(ctx); err != nil {
-			a.log.Warn().Err(err).Msg("agent.Run - error stopping native eBPF agent")
-		}
-	}
+	a.log.Debug().Msg("agent.Run - Shutdown signal received")
+	a.shutdownEBPF(ctx)
 
 	a.log.Debug().Msg("agent.Run - Shutdown signal received, shutting down")
 	close(requestWatcherShutdown)
@@ -212,10 +183,7 @@ func (a *agent) HandleServerRequest(req client.Request) error {
 		a.log.Debug().Msg("agent.HandleServerRequest - received system.info request")
 		a.handleSystemInfoRequest(req)
 		a.CheckScheduleGet()
-		// Fetch stored native agent config from server (if any)
-		if err := a.NativeConfigGetStored(); err != nil {
-			a.log.Warn().Err(err).Msg("agent.HandleServerRequest - failed to get stored native config")
-		}
+		a.onSystemInfo(req)
 	case "agent.refresh_check_profiles":
 		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_check_profiles request")
 		a.handleRefreshCheckProfilesRequest(req)
@@ -224,37 +192,12 @@ func (a *agent) HandleServerRequest(req client.Request) error {
 		a.handleRefreshChecksRequest(req)
 	case "host_info_types.get":
 		a.log.Debug().Msg("agent.HandleServerRequest - received host_info_types.get request")
-	// Native eBPF agent handlers
-	case "native_config.get":
-		a.log.Debug().Msg("agent.HandleServerRequest - received native_config.get request")
-		a.handleNativeConfigGetRequest(req)
-	case "native_config.update":
-		a.log.Debug().Msg("agent.HandleServerRequest - received native_config.update request")
-		a.handleNativeConfigUpdateRequest(req)
-	case "enable_native_agent":
-		a.log.Debug().Msg("agent.HandleServerRequest - received enable_native_agent request")
-		a.handleEnableNativeAgentRequest(req)
-	case "disable_native_agent":
-		a.log.Debug().Msg("agent.HandleServerRequest - received disable_native_agent request")
-		a.handleDisableNativeAgentRequest(req)
-	case "native_agent.status":
-		a.log.Debug().Msg("agent.HandleServerRequest - received native_agent.status request")
-		a.handleNativeAgentStatusRequest(req)
-	case "refresh_native_config":
-		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_native_config request")
-		a.handleRefreshNativeConfigRequest(req)
-	case "agent.refresh_compliance":
-		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_compliance request")
-		a.handleRefreshComplianceRequest(req)
-	case "native_rules.update":
-		a.log.Debug().Msg("agent.HandleServerRequest - received native_rules.update request")
-		a.handleNativeRulesUpdateRequest(req)
-	case "update_agent":
-		a.log.Info().Msg("agent.HandleServerRequest - received update_agent request")
-		go a.handleUpdateAgentRequest(req)
 	default:
-		a.log.Warn().Msgf("agent.HandleServerRequest - unknown method: %s", req.Method)
-		a.handleUnknownMethod(req)
+		// Try platform-specific eBPF handlers (Linux only)
+		if !a.handleEBPFRequest(req) {
+			a.log.Warn().Msgf("agent.HandleServerRequest - unknown method: %s", req.Method)
+			a.handleUnknownMethod(req)
+		}
 	}
 	return nil
 }

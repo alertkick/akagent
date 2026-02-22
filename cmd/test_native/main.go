@@ -1,3 +1,5 @@
+//go:build linux
+
 // test_native is a standalone test program for the native eBPF agent.
 // Run with: sudo go run ./cmd/test_native
 package main

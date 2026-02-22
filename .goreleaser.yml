@@ -1,0 +1,132 @@
+version: 2
+
+project_name: alertpriority-agent
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: linux
+    main: ./cmd
+    binary: alertpriority-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{.Version}} -X apagent/ebpf.agentVersion={{.Version}}
+
+  - id: windows
+    main: ./cmd
+    binary: alertpriority-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    goarch:
+      - amd64
+    ldflags:
+      - -s -w -X main.Version={{.Version}}
+    tags:
+      - noebpf
+
+archives:
+  - id: linux-archive
+    ids:
+      - linux
+    formats: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+  - id: windows-archive
+    ids:
+      - windows
+    formats: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+nfpms:
+  - id: deb
+    ids:
+      - linux
+    package_name: alertpriority-agent
+    vendor: AlertPriority
+    homepage: https://alertpriority.com
+    maintainer: AlertPriority <support@alertpriority.com>
+    description: AlertPriority monitoring and security agent
+    license: Proprietary
+    formats:
+      - deb
+    bindir: /usr/bin
+    contents:
+      - src: packaging/linux/systemd/alertpriority-agent.service
+        dst: /lib/systemd/system/alertpriority-agent.service
+      - src: packaging/linux/sysv-debian/alertpriority-agent
+        dst: /etc/init.d/alertpriority-agent
+        file_info:
+          mode: 0755
+      - src: packaging/linux/logrotate/alertpriority-agent
+        dst: /etc/logrotate.d/alertpriority-agent
+      - src: packaging/linux/conf/alertpriority-agent.conf
+        dst: /etc/alertpriority-agent/alertpriority-agent.conf
+        type: config|noreplace
+      - dst: /var/lib/alertpriority-agent
+        type: dir
+      - dst: /etc/alertpriority-agent
+        type: dir
+      - dst: /usr/lib/alertpriority-agent/plugins
+        type: dir
+    scripts:
+      postinstall: packaging/scripts/deb-postinst.sh
+      preremove: packaging/scripts/deb-prerm.sh
+      postremove: packaging/scripts/deb-postrm.sh
+
+  - id: rpm
+    ids:
+      - linux
+    package_name: alertpriority-agent
+    vendor: AlertPriority
+    homepage: https://alertpriority.com
+    maintainer: AlertPriority <support@alertpriority.com>
+    description: AlertPriority monitoring and security agent
+    license: Proprietary
+    formats:
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: packaging/linux/systemd/alertpriority-agent.service
+        dst: /lib/systemd/system/alertpriority-agent.service
+      - src: packaging/linux/sysv-redhat/alertpriority-agent
+        dst: /etc/init.d/alertpriority-agent
+        file_info:
+          mode: 0755
+      - src: packaging/linux/logrotate/alertpriority-agent
+        dst: /etc/logrotate.d/alertpriority-agent
+      - src: packaging/linux/conf/alertpriority-agent.conf
+        dst: /etc/alertpriority-agent/alertpriority-agent.conf
+        type: config|noreplace
+      - dst: /var/lib/alertpriority-agent
+        type: dir
+      - dst: /etc/alertpriority-agent
+        type: dir
+      - dst: /usr/lib/alertpriority-agent/plugins
+        type: dir
+    scripts:
+      postinstall: packaging/scripts/rpm-postinst.sh
+      preremove: packaging/scripts/rpm-preun.sh
+    rpm:
+      group: System Environment/Daemons
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"

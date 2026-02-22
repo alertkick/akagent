@@ -1,8 +1,8 @@
 #! /bin/bash
 
 # this file takes one argument, bump as -b
-#  if -b is not provided, it will bump the version 
-#  otherwise it just returns the latest tag without the v prefix.
+#  if -b is not provided, it returns the latest tag version without the v prefix.
+#  if -b is provided, it bumps the version, creates a new v-prefixed tag, and pushes it.
 
 if [ "$1" == "-b" ]; then
     bump=true
@@ -13,21 +13,24 @@ fi
 if [ "$bump" == false ]; then
     version=$(git describe --tags `git rev-list --tags --max-count=1`)
 
-    # remove the v prefix
+    # remove the v prefix for build ldflags
     version=$(echo "$version" | sed 's/^v//')
     echo "$version"
 else
     version=$(git describe --tags `git rev-list --tags --max-count=1`)
-    echo "Current version: $version"
 
-    #Version to get the latest tag 
+    # strip v prefix for arithmetic
+    version=$(echo "$version" | sed 's/^v//')
+    echo "Current version: v$version"
+
+    #Version to get the latest tag
     A=$(echo $version|cut -d '.' -f1)
     B=$(echo $version|cut -d '.' -f2)
     C=$(echo $version|cut -d '.' -f3)
     if [ $C -gt 8 ]; then
         if [ $B -gt 8 ]; then
             A=$((A+1))
-            B=0 C=0 
+            B=0 C=0
         else
             B=$((B+1))
             C=0
@@ -35,7 +38,7 @@ else
     else
         C=$((C+1))
     fi
-    nextVersion="$A.$B.$C"
+    nextVersion="v$A.$B.$C"
     echo "New version will be '${nextVersion}'"
 
     git tag -a $nextVersion -m "Release $nextVersion"

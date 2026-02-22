@@ -7,10 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"sync"
-	"syscall"
 
 	"github.com/rs/zerolog"
 )
@@ -102,14 +100,7 @@ var (
 func LoadConfig(configfile string, log zerolog.Logger) {
 	LoadedConfigfilePath = configfile
 	loadConfig(true, configfile, log)
-	s := make(chan os.Signal, 1)
-	signal.Notify(s, syscall.SIGUSR2)
-	go func() {
-		for {
-			<-s
-			loadConfig(false, configfile, log)
-		}
-	}()
+	watchConfigReloadSignal(configfile, log)
 }
 
 func UpdateConfigFileWithOption(config *Config) error {

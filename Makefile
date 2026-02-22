@@ -107,9 +107,19 @@ production/deploy: confirm tidy audit no-dirty
 	# Include additional deployment steps here...
 
 
+## release/build: build all platform packages with goreleaser (no publish)
+.PHONY: release/build
+release/build: bpf/generate
+	goreleaser release --clean --skip=publish
+
+## release/snapshot: build snapshot packages (no version tag needed)
+.PHONY: release/snapshot
+release/snapshot: bpf/generate
+	goreleaser release --clean --snapshot
+
 .PHONY: clean
 clean:
-	rm -rf build
+	rm -rf build dist
 
 .PHONY: package
 package: clean

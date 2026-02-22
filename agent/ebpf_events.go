@@ -1,3 +1,5 @@
+//go:build linux
+
 package agent
 
 import (
@@ -120,8 +122,8 @@ func (a *agent) StartEBPFEventSender(shutdown chan struct{}, wg *sync.WaitGroup)
 
 	// Get event channel from native agent
 	var eventChan <-chan ebpf.SecurityEvent
-	if a.nativeAgent != nil {
-		eventChan = a.nativeAgent.EventChannel()
+	if a.platformData.nativeAgent != nil {
+		eventChan = a.platformData.nativeAgent.EventChannel()
 	}
 
 	// Event batch buffer (high-priority events go here directly)
@@ -323,11 +325,11 @@ func (a *agent) SendSecurityEvent(event ebpf.SecurityEvent) error {
 }
 
 func (a *agent) updateNativeAgentServiceStatus() {
-	if a.nativeAgent == nil {
+	if a.platformData.nativeAgent == nil {
 		return
 	}
 
-	status, err := a.nativeAgent.GetServiceStatus()
+	status, err := a.platformData.nativeAgent.GetServiceStatus()
 	if err != nil {
 		a.log.Warn().Err(err).Msg("agent.updateNativeAgentServiceStatus - failed to get service status")
 		return
@@ -381,35 +383,35 @@ func (a *agent) UpdateEBPFAgentServiceStatus(agentType string, status string) {
 
 // GetNativeAgentInfo returns information about the native eBPF agent
 func (a *agent) GetNativeAgentInfo() *ebpf.AgentInfo {
-	if a.nativeAgent == nil {
+	if a.platformData.nativeAgent == nil {
 		return nil
 	}
-	info := ebpf.GetInfo(a.nativeAgent)
+	info := ebpf.GetInfo(a.platformData.nativeAgent)
 	return &info
 }
 
 // EnableNativeAgent enables the native eBPF agent
 func (a *agent) EnableNativeAgent() error {
-	if a.nativeAgent == nil {
+	if a.platformData.nativeAgent == nil {
 		return errors.New("native agent not initialized")
 	}
 
-	if err := a.nativeAgent.Start(a.ctx); err != nil {
+	if err := a.platformData.nativeAgent.Start(a.ctx); err != nil {
 		return err
 	}
 
-	return a.nativeAgent.StartEventListener(a.ctx)
+	return a.platformData.nativeAgent.StartEventListener(a.ctx)
 }
 
 // DisableNativeAgent disables the native eBPF agent
 func (a *agent) DisableNativeAgent() error {
-	if a.nativeAgent == nil {
+	if a.platformData.nativeAgent == nil {
 		return errors.New("native agent not initialized")
 	}
 
-	if err := a.nativeAgent.StopEventListener(); err != nil {
+	if err := a.platformData.nativeAgent.StopEventListener(); err != nil {
 		return err
 	}
 
-	return a.nativeAgent.Stop(a.ctx)
+	return a.platformData.nativeAgent.Stop(a.ctx)
 }

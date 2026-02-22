@@ -15,8 +15,6 @@ import (
 	"apagent/common"
 	"apagent/config"
 	"apagent/logger"
-
-	"golang.org/x/mod/semver"
 )
 
 var fConfigDir = flag.String("configdir", "/etc/alertpriority-agent", "path to config directory")
@@ -28,8 +26,6 @@ var fSetup = flag.Bool("setup", false, "setup the agent")
 
 // Version - holds the version number
 var Version string
-
-const minSupportedKernelVersion = "4.16"
 
 func main() {
 
@@ -71,13 +67,8 @@ func main() {
 	log.Info().Msgf("hostname: %s", hostname)
 	log.Info().Msgf("kernel version: %s", kv)
 
-	ver := common.KernelMajorMinor(kv)
-	if ver == "" {
-		log.Panic().Msgf("invalid kernel version: %v", kv)
-	}
-	if semver.Compare("v"+ver, "v"+minSupportedKernelVersion) == -1 {
-		log.Panic().Msgf("the minimum Linux kernel version required is %s or later", minSupportedKernelVersion)
-	}
+	// Platform-specific kernel validation (Linux only, no-op on other platforms)
+	validateKernel(log, kv)
 
 	if *fSetup {
 		Setup()
