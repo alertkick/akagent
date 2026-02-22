@@ -4,9 +4,8 @@ A lightweight, high-performance security monitoring agent for Linux systems usin
 
 ## Architecture
 
-This agent follows an **open-core architecture**:
-- **Agent (Open Source)**: Captures and enriches raw events using native eBPF
-- **Backend (Proprietary)**: Provides intelligence - compliance tagging, LLM analysis, alert rules
+- **Agent**: Captures and enriches raw system events using native eBPF
+- **Backend**: Provides intelligence - compliance tagging, LLM analysis, alert rules
 
 The agent captures events and enriches them with process/container context. All compliance logic, alert rules, and threat analysis happen in the AlertPriority backend.
 
@@ -251,7 +250,7 @@ sudo bpftool map list | grep events
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE.txt](LICENSE.txt) file for details.
+This software is proprietary and requires a valid AlertPriority subscription. See [LICENSE.txt](LICENSE.txt) for the full license agreement. Third-party open-source components and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Support
 
