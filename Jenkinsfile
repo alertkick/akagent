@@ -1,14 +1,12 @@
 pipeline {
-    agent {
-        docker {
-            image 'goreleaser/goreleaser:v2.5.0'
-            args '--entrypoint=""'
-        }
-    }
+    agent any
 
     environment {
+        GO_VERSION = '1.23.6'
+        GORELEASER_VERSION = '2.5.0'
+        GOROOT = "${WORKSPACE}/tools/go"
         GOPATH = "${WORKSPACE}/go"
-        PATH = "${GOPATH}/bin:/usr/local/go/bin:${PATH}"
+        PATH = "${WORKSPACE}/tools/go/bin:${GOPATH}/bin:${WORKSPACE}/tools/bin:${PATH}"
     }
 
     options {
@@ -35,6 +33,25 @@ pipeline {
         stage('Setup Tools') {
             steps {
                 sh '''
+                    mkdir -p ${WORKSPACE}/tools/bin
+
+                    # Install Go
+                    if [ ! -x "${GOROOT}/bin/go" ]; then
+                        curl -sfL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+                        tar -C ${WORKSPACE}/tools -xzf /tmp/go.tar.gz
+                        rm -f /tmp/go.tar.gz
+                    fi
+                    go version
+
+                    # Install GoReleaser
+                    if [ ! -x "${WORKSPACE}/tools/bin/goreleaser" ]; then
+                        curl -sfL "https://github.com/goreleaser/goreleaser/releases/download/v${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz" -o /tmp/goreleaser.tar.gz
+                        tar -C ${WORKSPACE}/tools/bin -xzf /tmp/goreleaser.tar.gz goreleaser
+                        rm -f /tmp/goreleaser.tar.gz
+                    fi
+                    goreleaser --version
+
+                    # Install go-licenses
                     go install github.com/google/go-licenses@latest
                 '''
             }
