@@ -16,9 +16,15 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                checkout scm
-                // Fetch all tags for goreleaser version detection
-                sh 'git fetch --tags --force'
+                checkout([
+                    $class: 'GitSCM',
+                    branches: scm.branches,
+                    extensions: scm.extensions + [
+                        [$class: 'CloneOption', noTags: false, shallow: false],
+                        [$class: 'CleanBeforeCheckout']
+                    ],
+                    userRemoteConfigs: scm.userRemoteConfigs
+                ])
             }
         }
 
