@@ -1,10 +1,14 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'goreleaser/goreleaser:v2.5.0'
+            args '--entrypoint=""'
+        }
+    }
 
     environment {
         GOPATH = "${WORKSPACE}/go"
-        PATH = "${GOPATH}/bin:${PATH}"
-        GORELEASER_VERSION = '2.5.0'
+        PATH = "${GOPATH}/bin:/usr/local/go/bin:${PATH}"
     }
 
     options {
@@ -31,24 +35,20 @@ pipeline {
         stage('Setup Tools') {
             steps {
                 sh '''
-                    # Install GoReleaser if not present
-                    if ! command -v goreleaser &> /dev/null; then
-                        curl -sfL https://goreleaser.com/static/run | bash -s -- --version
-                        go install github.com/goreleaser/goreleaser/v2@v${GORELEASER_VERSION}
-                    fi
+                    go install github.com/google/go-licenses@latest
                 '''
             }
         }
 
         stage('License Check') {
             steps {
-                sh 'make licenses/check'
+                sh 'go-licenses check ./... --disallowed_types=restricted'
             }
         }
 
         stage('License Collect') {
             steps {
-                sh 'make licenses'
+                sh 'go-licenses save ./... --save_path=./third_party_licenses --force'
             }
         }
 
