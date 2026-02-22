@@ -162,11 +162,13 @@ func Setup() {
 	log.Info().Msgf("Host Label: %s", hostLabel)
 	log.Info().Msgf("Subdomain: %s", subdomain)
 
-	endpoint := ""
-	if agentEnv == "staging" {
-		endpoint = "monit-stg.alertpriority.com:8585"
-	} else {
-		endpoint = "monit.alertpriority.com:8585"
+	endpoint := os.Getenv("AP_AGENT_ENDPOINT")
+	if endpoint == "" {
+		if agentEnv == "staging" {
+			endpoint = "monit-stg.alertpriority.com:8585"
+		} else {
+			endpoint = "monit.alertpriority.com:8585"
+		}
 	}
 
 	// Verify the agent token by connecting to the endpoint

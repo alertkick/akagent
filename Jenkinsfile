@@ -34,6 +34,18 @@ pipeline {
             }
         }
 
+        stage('License Check') {
+            steps {
+                sh 'make licenses/check'
+            }
+        }
+
+        stage('License Collect') {
+            steps {
+                sh 'make licenses'
+            }
+        }
+
         stage('Test') {
             steps {
                 sh 'go test -race ./...'
@@ -70,7 +82,7 @@ pipeline {
                         REMOTE_PATH="${DEPLOY_PATH:-/var/www/repos/agent}"
 
                         # Upload all packages
-                        scp -i $SSH_KEY -o StrictHostKeyChecking=no \
+                        scp -i $SSH_KEY -o StrictHostKeyChecking=accept-new \
                             dist/*.deb \
                             dist/*.rpm \
                             dist/*.tar.gz \

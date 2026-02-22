@@ -91,7 +91,7 @@ The agent configuration file is located at `/etc/alertpriority-agent/alertpriori
   "AgentID": "your-agent-id",
   "AgentName": "my-server",
   "Subdomain": "your-subdomain",
-  "Endpoint": "monit.alertpriority.com:8484",
+  "Endpoint": "your-endpoint.alertpriority.com:8585",
   "TLSInsecure": false
 }
 ```
@@ -105,7 +105,7 @@ The agent configuration file is located at `/etc/alertpriority-agent/alertpriori
 | `AgentID` | Unique identifier for this agent | Required |
 | `AgentName` | Human-readable name for this host | Optional |
 | `Subdomain` | Your AlertPriority subdomain | Required |
-| `Endpoint` | AlertPriority server endpoint | `monit.alertpriority.com:8484` |
+| `Endpoint` | AlertPriority server endpoint | Provided during setup |
 | `TLSInsecure` | Skip TLS certificate verification | `false` |
 | `TLSCAFilePath` | Path to additional CA certificate | Optional |
 
@@ -120,6 +120,7 @@ The agent can also be configured via environment variables during setup:
 | `AP_AGENT_ID` | Unique agent identifier |
 | `AP_AGENT_HOST_LABEL` | Host label for display |
 | `AP_AGENT_SUBDOMAIN` | Your AlertPriority subdomain |
+| `AP_AGENT_ENDPOINT` | Override default server endpoint |
 
 ## Building Packages
 

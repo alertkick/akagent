@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+dist/
 *.exe
 *.exe~
 *.dll
@@ -8,6 +9,13 @@ build/
 *.deb
 *.rpm
 *.msi
+
+# Compiled binaries
+main
+alertpriority-agent
+
+# Demo/test data
+demo-security-events/
 
 # Test artifacts
 *.test

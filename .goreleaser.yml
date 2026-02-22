@@ -78,6 +78,10 @@ nfpms:
         type: dir
       - dst: /usr/lib/alertpriority-agent/plugins
         type: dir
+      - src: LICENSE.txt
+        dst: /usr/share/doc/alertpriority-agent/LICENSE.txt
+      - src: THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/alertpriority-agent/THIRD_PARTY_NOTICES.md
     scripts:
       postinstall: packaging/scripts/deb-postinst.sh
       preremove: packaging/scripts/deb-prerm.sh
@@ -113,6 +117,10 @@ nfpms:
         type: dir
       - dst: /usr/lib/alertpriority-agent/plugins
         type: dir
+      - src: LICENSE.txt
+        dst: /usr/share/doc/alertpriority-agent/LICENSE.txt
+      - src: THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/alertpriority-agent/THIRD_PARTY_NOTICES.md
     scripts:
       postinstall: packaging/scripts/rpm-postinst.sh
       preremove: packaging/scripts/rpm-preun.sh

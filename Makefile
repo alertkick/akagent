@@ -107,6 +107,24 @@ production/deploy: confirm tidy audit no-dirty
 	# Include additional deployment steps here...
 
 
+## licenses: collect third-party license files into a directory
+.PHONY: licenses
+licenses:
+	go install github.com/google/go-licenses@latest
+	go-licenses save ./... --save_path=./third_party_licenses --force
+
+## licenses/check: verify no restricted (GPL) licenses are used
+.PHONY: licenses/check
+licenses/check:
+	go install github.com/google/go-licenses@latest
+	go-licenses check ./... --disallowed_types=restricted
+
+## licenses/report: generate a CSV report of all dependency licenses
+.PHONY: licenses/report
+licenses/report:
+	go install github.com/google/go-licenses@latest
+	go-licenses report ./...
+
 ## release/build: build all platform packages with goreleaser (no publish)
 .PHONY: release/build
 release/build: bpf/generate

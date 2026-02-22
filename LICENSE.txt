@@ -1,202 +1,146 @@
+AlertPriority Agent - Proprietary Software License Agreement
 
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
+Copyright (c) 2024-2026 AlertPriority. All rights reserved.
 
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+https://alertpriority.com
 
-   1. Definitions.
+IMPORTANT: READ THIS LICENSE AGREEMENT CAREFULLY BEFORE USING THIS SOFTWARE.
 
-      "License" shall mean the terms and conditions for use, reproduction,
-      and distribution as defined by Sections 1 through 9 of this document.
+By installing, copying, downloading, or otherwise using the AlertPriority Agent
+software ("Software"), you agree to be bound by the terms of this License
+Agreement ("Agreement"). If you do not agree to these terms, do not install or
+use the Software.
 
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License.
+1. GRANT OF LICENSE
 
-      "Legal Entity" shall mean the union of the acting entity and all
-      other entities that control, are controlled by, or are under common
-      control with that entity. For the purposes of this definition,
-      "control" means (i) the power, direct or indirect, to cause the
-      direction or management of such entity, whether by contract or
-      otherwise, or (ii) ownership of fifty percent (50%) or more of the
-      outstanding shares, or (iii) beneficial ownership of such entity.
+   Subject to the terms of this Agreement and a valid, paid subscription to the
+   AlertPriority platform ("Subscription"), AlertPriority grants you a limited,
+   non-exclusive, non-transferable, non-sublicensable, revocable license to
+   install and use the Software solely in connection with your authorized use of
+   the AlertPriority platform at https://alertpriority.com.
 
-      "You" (or "Your") shall mean an individual or Legal Entity
-      exercising permissions granted by this License.
+2. SUBSCRIPTION REQUIREMENT
 
-      "Source" form shall mean the preferred form for making modifications,
-      including but not limited to software source code, documentation
-      source, and configuration files.
+   The Software requires an active, paid AlertPriority Subscription to operate.
+   Your right to use the Software is contingent upon maintaining a valid
+   Subscription in good standing. Upon expiration or termination of your
+   Subscription, your license to use the Software immediately terminates, and
+   you must uninstall and destroy all copies of the Software in your possession.
 
-      "Object" form shall mean any form resulting from mechanical
-      transformation or translation of a Source form, including but
-      not limited to compiled object code, generated documentation,
-      and conversions to other media types.
+3. RESTRICTIONS
 
-      "Work" shall mean the work of authorship, whether in Source or
-      Object form, made available under the License, as indicated by a
-      copyright notice that is included in or attached to the work
-      (an example is provided in the Appendix below).
+   You shall NOT:
 
-      "Derivative Works" shall mean any work, whether in Source or Object
-      form, that is based on (or derived from) the Work and for which the
-      editorial revisions, annotations, elaborations, or other modifications
-      represent, as a whole, an original work of authorship. For the purposes
-      of this License, Derivative Works shall not include works that remain
-      separable from, or merely link (or bind by name) to the interfaces of,
-      the Work and Derivative Works thereof.
+   (a) Copy, modify, adapt, translate, or create derivative works based on
+       the Software, in whole or in part;
 
-      "Contribution" shall mean any work of authorship, including
-      the original version of the Work and any modifications or additions
-      to that Work or Derivative Works thereof, that is intentionally
-      submitted to Licensor for inclusion in the Work by the copyright owner
-      or by an individual or Legal Entity authorized to submit on behalf of
-      the copyright owner. For the purposes of this definition, "submitted"
-      means any form of electronic, verbal, or written communication sent
-      to the Licensor or its representatives, including but not limited to
-      communication on electronic mailing lists, source code control systems,
-      and issue tracking systems that are managed by, or on behalf of, the
-      Licensor for the purpose of discussing and improving the Work, but
-      excluding communication that is conspicuously marked or otherwise
-      designated in writing by the copyright owner as "Not a Contribution."
+   (b) Reverse engineer, disassemble, decompile, or otherwise attempt to
+       derive the source code or underlying algorithms of the Software;
 
-      "Contributor" shall mean Licensor and any individual or Legal Entity
-      on behalf of whom a Contribution has been received by Licensor and
-      subsequently incorporated within the Work.
+   (c) Distribute, sublicense, lease, rent, loan, sell, resell, or otherwise
+       transfer the Software or any rights therein to any third party;
 
-   2. Grant of Copyright License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      copyright license to reproduce, prepare Derivative Works of,
-      publicly display, publicly perform, sublicense, and distribute the
-      Work and such Derivative Works in Source or Object form.
+   (d) Remove, alter, or obscure any proprietary notices, labels, or marks
+       on the Software;
 
-   3. Grant of Patent License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      (except as stated in this section) patent license to make, have made,
-      use, offer to sell, sell, import, and otherwise transfer the Work,
-      where such license applies only to those patent claims licensable
-      by such Contributor that are necessarily infringed by their
-      Contribution(s) alone or by combination of their Contribution(s)
-      with the Work to which such Contribution(s) was submitted. If You
-      institute patent litigation against any entity (including a
-      cross-claim or counterclaim in a lawsuit) alleging that the Work
-      or a Contribution incorporated within the Work constitutes direct
-      or contributory patent infringement, then any patent licenses
-      granted to You under this License for that Work shall terminate
-      as of the date such litigation is filed.
+   (e) Use the Software for any purpose other than in connection with an
+       authorized AlertPriority Subscription;
 
-   4. Redistribution. You may reproduce and distribute copies of the
-      Work or Derivative Works thereof in any medium, with or without
-      modifications, and in Source or Object form, provided that You
-      meet the following conditions:
+   (f) Use the Software to develop a competing product or service;
 
-      (a) You must give any other recipients of the Work or
-          Derivative Works a copy of this License; and
+   (g) Use the Software on systems or for accounts not covered by your
+       Subscription;
 
-      (b) You must cause any modified files to carry prominent notices
-          stating that You changed the files; and
+   (h) Circumvent or attempt to circumvent any technical protection measures,
+       license verification, or authentication mechanisms in the Software;
 
-      (c) You must retain, in the Source form of any Derivative Works
-          that You distribute, all copyright, patent, trademark, and
-          attribution notices from the Source form of the Work,
-          excluding those notices that do not pertain to any part of
-          the Derivative Works; and
+   (i) Share, publish, or disclose your Subscription credentials or agent
+       authentication tokens to any unauthorized party.
 
-      (d) If the Work includes a "NOTICE" text file as part of its
-          distribution, then any Derivative Works that You distribute must
-          include a readable copy of the attribution notices contained
-          within such NOTICE file, excluding those notices that do not
-          pertain to any part of the Derivative Works, in at least one
-          of the following places: within a NOTICE text file distributed
-          as part of the Derivative Works; within the Source form or
-          documentation, if provided along with the Derivative Works; or,
-          within a display generated by the Derivative Works, if and
-          wherever such third-party notices normally appear. The contents
-          of the NOTICE file are for informational purposes only and
-          do not modify the License. You may add Your own attribution
-          notices within Derivative Works that You distribute, alongside
-          or as an addendum to the NOTICE text from the Work, provided
-          that such additional attribution notices cannot be construed
-          as modifying the License.
+4. INTELLECTUAL PROPERTY
 
-      You may add Your own copyright statement to Your modifications and
-      may provide additional or different license terms and conditions
-      for use, reproduction, or distribution of Your modifications, or
-      for any such Derivative Works as a whole, provided Your use,
-      reproduction, and distribution of the Work otherwise complies with
-      the conditions stated in this License.
+   The Software, including all copies, modifications, and derivative works, is
+   and shall remain the sole and exclusive property of AlertPriority. This
+   Agreement does not convey to you any ownership interest in or to the
+   Software, but only a limited right of use subject to the terms of this
+   Agreement. AlertPriority reserves all rights not expressly granted herein.
 
-   5. Submission of Contributions. Unless You explicitly state otherwise,
-      any Contribution intentionally submitted for inclusion in the Work
-      by You to the Licensor shall be under the terms and conditions of
-      this License, without any additional terms or conditions.
-      Notwithstanding the above, nothing herein shall supersede or modify
-      the terms of any separate license agreement you may have executed
-      with Licensor regarding such Contributions.
+   "AlertPriority," the AlertPriority logo, and all related product and service
+   names, marks, and logos are trademarks or registered trademarks of
+   AlertPriority. You may not use any such marks without the prior written
+   consent of AlertPriority.
 
-   6. Trademarks. This License does not grant permission to use the trade
-      names, trademarks, service marks, or product names of the Licensor,
-      except as required for reasonable and customary use in describing the
-      origin of the Work and reproducing the content of the NOTICE file.
+5. DATA COLLECTION
 
-   7. Disclaimer of Warranty. Unless required by applicable law or
-      agreed to in writing, Licensor provides the Work (and each
-      Contributor provides its Contributions) on an "AS IS" BASIS,
-      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-      implied, including, without limitation, any warranties or conditions
-      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
-      PARTICULAR PURPOSE. You are solely responsible for determining the
-      appropriateness of using or redistributing the Work and assume any
-      risks associated with Your exercise of permissions under this License.
+   The Software may collect and transmit system telemetry, security events, and
+   operational data to the AlertPriority platform as part of its intended
+   functionality. Such data collection is governed by the AlertPriority Privacy
+   Policy available at https://alertpriority.com/privacy.
 
-   8. Limitation of Liability. In no event and under no legal theory,
-      whether in tort (including negligence), contract, or otherwise,
-      unless required by applicable law (such as deliberate and grossly
-      negligent acts) or agreed to in writing, shall any Contributor be
-      liable to You for damages, including any direct, indirect, special,
-      incidental, or consequential damages of any character arising as a
-      result of this License or out of the use or inability to use the
-      Work (including but not limited to damages for loss of goodwill,
-      work stoppage, computer failure or malfunction, or any and all
-      other commercial damages or losses), even if such Contributor
-      has been advised of the possibility of such damages.
+6. DISCLAIMER OF WARRANTIES
 
-   9. Accepting Warranty or Additional Liability. While redistributing
-      the Work or Derivative Works thereof, You may choose to offer,
-      and charge a fee for, acceptance of support, warranty, indemnity,
-      or other liability obligations and/or rights consistent with this
-      License. However, in accepting such obligations, You may act only
-      on Your own behalf and on Your sole responsibility, not on behalf
-      of any other Contributor, and only if You agree to indemnify,
-      defend, and hold each Contributor harmless for any liability
-      incurred by, or claims asserted against, such Contributor by reason
-      of your accepting any such warranty or additional liability.
+   THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF
+   ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED
+   WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND
+   NON-INFRINGEMENT. ALERTPRIORITY DOES NOT WARRANT THAT THE SOFTWARE WILL BE
+   UNINTERRUPTED, ERROR-FREE, SECURE, OR FREE OF VIRUSES OR OTHER HARMFUL
+   COMPONENTS.
 
-   END OF TERMS AND CONDITIONS
+7. LIMITATION OF LIABILITY
 
-   APPENDIX: How to apply the Apache License to your work.
+   IN NO EVENT SHALL ALERTPRIORITY BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
+   SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS,
+   REVENUE, DATA, OR USE, ARISING OUT OF OR RELATED TO THIS AGREEMENT OR THE
+   USE OR INABILITY TO USE THE SOFTWARE, REGARDLESS OF THE THEORY OF LIABILITY,
+   EVEN IF ALERTPRIORITY HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
 
-      To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "[]"
-      replaced with your own identifying information. (Don't include
-      the brackets!)  The text should be enclosed in the appropriate
-      comment syntax for the file format. We also recommend that a
-      file or class name and description of purpose be included on the
-      same "printed page" as the copyright notice for easier
-      identification within third-party archives.
+   ALERTPRIORITY'S TOTAL AGGREGATE LIABILITY ARISING OUT OF OR RELATED TO THIS
+   AGREEMENT SHALL NOT EXCEED THE AMOUNTS PAID BY YOU TO ALERTPRIORITY FOR THE
+   SUBSCRIPTION DURING THE TWELVE (12) MONTHS IMMEDIATELY PRECEDING THE EVENT
+   GIVING RISE TO THE CLAIM.
 
-   Copyright [yyyy] [name of copyright owner]
+8. TERMINATION
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+   This Agreement is effective until terminated. AlertPriority may terminate
+   this Agreement immediately and without notice if you breach any term of this
+   Agreement. Upon termination:
 
-       http://www.apache.org/licenses/LICENSE-2.0
+   (a) All rights granted to you under this Agreement shall immediately cease;
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+   (b) You must immediately uninstall and destroy all copies of the Software;
+
+   (c) Sections 3, 4, 6, 7, 9, and 10 shall survive termination.
+
+9. GOVERNING LAW
+
+   This Agreement shall be governed by and construed in accordance with the
+   laws of the jurisdiction in which AlertPriority is incorporated, without
+   regard to its conflict of laws principles.
+
+10. GENERAL
+
+    This Agreement constitutes the entire agreement between you and AlertPriority
+    regarding the Software and supersedes all prior agreements and
+    understandings, whether written or oral. If any provision of this Agreement
+    is held to be unenforceable, the remaining provisions shall continue in full
+    force and effect. AlertPriority's failure to enforce any right or provision
+    of this Agreement shall not constitute a waiver of such right or provision.
+
+    AlertPriority reserves the right to modify this Agreement at any time.
+    Continued use of the Software after such modifications constitutes your
+    acceptance of the revised Agreement.
+
+11. THIRD-PARTY COMPONENTS
+
+    The Software includes third-party open-source components that are licensed
+    under their own respective licenses. These components and their licenses are
+    listed in the THIRD_PARTY_NOTICES.md file distributed with the Software.
+    Nothing in this Agreement limits your rights under, or grants you rights
+    that supersede, the license terms of any such third-party component.
+
+12. CONTACT
+
+    For questions about this Agreement, please contact:
+    AlertPriority
+    Email: support@alertpriority.com
+    Web: https://alertpriority.com
