@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,7 +86,12 @@ func (a *agent) handleUpdateAgentRequest(req client.Request) {
 			return
 		}
 
-		if actualChecksum != params.Checksum {
+		expectedChecksum := params.Checksum
+		if _, after, ok := strings.Cut(expectedChecksum, ":"); ok {
+			expectedChecksum = after
+		}
+
+		if actualChecksum != expectedChecksum {
 			msg := fmt.Sprintf("Checksum mismatch: expected %s, got %s", params.Checksum, actualChecksum)
 			a.log.Error().Msg("agent.handleUpdateAgentRequest - " + msg)
 			a.sendUpdateProgress(req, "failed", msg, 0, "failed")
