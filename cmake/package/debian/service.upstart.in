@@ -5,4 +5,4 @@ stop on runlevel [!2345]
 env TMPDIR=/var/lib
 
 respawn
-exec @APP_NAME@ --logfile /var/log/@APP_NAME@.log 2>&1
+exec @APP_NAME@ --logfile /var/log/@APP_NAME@/apagent.log 2>&1

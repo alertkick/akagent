@@ -390,16 +390,34 @@ func readNetFile(path string, protocol string) ([]ListeningPort, error) {
 			continue
 		}
 
-		// Parse local address (field 1)
+		// Parse local address (field 1), remote address (field 2), state (field 3)
 		localAddr := fields[1]
-
-		// Parse state (field 3) - 0A = LISTEN for TCP, UDP doesn't have LISTEN state
+		remoteAddr := fields[2]
 		state := fields[3]
 
-		// For TCP, only include listening sockets (state 0A)
-		// For UDP, all bound sockets are considered "listening"
+		// For TCP, only include listening sockets (state 0A = LISTEN)
 		if strings.HasPrefix(protocol, "tcp") && state != "0A" {
 			continue
+		}
+
+		// For UDP, filter out ephemeral outgoing connections:
+		// State 07 = unconnected (listening), 01 = established (outgoing)
+		// A listening socket has remote address 00000000:0000 (not connected to a peer)
+		if strings.HasPrefix(protocol, "udp") {
+			if state != "07" {
+				continue
+			}
+			remoteHex := strings.ReplaceAll(remoteAddr, ":", "")
+			isZero := true
+			for _, c := range remoteHex {
+				if c != '0' {
+					isZero = false
+					break
+				}
+			}
+			if !isZero {
+				continue
+			}
 		}
 
 		// Parse the address and port

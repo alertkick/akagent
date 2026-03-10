@@ -242,17 +242,73 @@ func extractContainerID(path string) (string, string) {
 	return "", ""
 }
 
-// lookupDockerContainerName attempts to get container name from Docker
-// This is best-effort and may not always succeed
+// lookupDockerContainerName attempts to get container name from Docker's config.v2.json.
+// Falls back to the hostname file if config.v2.json is not readable.
 func (e *EventEnricher) lookupDockerContainerName(containerID string) string {
-	// Try to read hostname from container's UTS namespace
-	// This is a simple heuristic - container name is often set as hostname
-	hostnamePath := fmt.Sprintf("/proc/1/root/var/lib/docker/containers/%s/hostname", containerID)
-	data, err := os.ReadFile(hostnamePath)
-	if err != nil {
+	// Docker stores container metadata in config.v2.json which includes the real
+	// container name (set via --name or auto-generated). We try two common root
+	// paths: the direct host path and the /proc/1/root path (for agents running
+	// outside the Docker namespace).
+	for _, root := range []string{"", "/proc/1/root"} {
+		configPath := fmt.Sprintf("%s/var/lib/docker/containers/%s/config.v2.json", root, containerID)
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			continue
+		}
+		// Fast extraction: find "Name":"/<name>" without full JSON parse.
+		// The Name field in config.v2.json is always prefixed with "/".
+		if name := extractJSONStringField(data, "Name"); name != "" {
+			return strings.TrimPrefix(name, "/")
+		}
+	}
+
+	// Fallback: read hostname file (often just short container ID, but better than empty)
+	for _, root := range []string{"", "/proc/1/root"} {
+		hostnamePath := fmt.Sprintf("%s/var/lib/docker/containers/%s/hostname", root, containerID)
+		data, err := os.ReadFile(hostnamePath)
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSpace(string(data))
+		if name != "" {
+			return name
+		}
+	}
+
+	return ""
+}
+
+// extractJSONStringField does a fast extraction of a top-level string field from JSON
+// without parsing the entire document. Looks for "key":"value" pattern.
+func extractJSONStringField(data []byte, key string) string {
+	// Build the search pattern: "Key":"
+	needle := fmt.Sprintf(`"%s":"`, key)
+	s := string(data)
+	idx := strings.Index(s, needle)
+	if idx < 0 {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+
+	// Move past the needle to the start of the value
+	valueStart := idx + len(needle)
+	if valueStart >= len(s) {
+		return ""
+	}
+
+	// Find the closing quote (handle escaped quotes)
+	i := valueStart
+	for i < len(s) {
+		if s[i] == '\\' {
+			i += 2 // skip escaped character
+			continue
+		}
+		if s[i] == '"' {
+			return s[valueStart:i]
+		}
+		i++
+	}
+
+	return ""
 }
 
 // getNamespaceInfo gets namespace info for a PID, using cache

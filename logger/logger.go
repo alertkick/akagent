@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,9 @@ import (
 var once sync.Once
 var log zerolog.Logger
 var logLevel int
+
+// LogFilePath is the path to the log file. Set this before calling Get().
+var LogFilePath string
 
 // VerboseLevel controls the verbosity of byte/message dumps
 // 0 = No raw bytes
@@ -217,9 +221,14 @@ func Get() zerolog.Logger {
 			TimeFormat: time.RFC3339,
 		}
 
-		if os.Getenv("AGENT_ENV") == "production" {
+		if os.Getenv("AGENT_ENV") == "production" || LogFilePath != "" {
+			logFile := LogFilePath
+			if logFile == "" {
+				logFile = "apagent.log"
+			}
+			os.MkdirAll(filepath.Dir(logFile), 0755)
 			fileLogger := &lumberjack.Logger{
-				Filename:   "apagent.log",
+				Filename:   logFile,
 				MaxSize:    5,
 				MaxBackups: 10,
 				MaxAge:     14,

@@ -6,6 +6,8 @@ import (
 	"apagent/logger"
 	"context"
 	"os"
+	"os/exec"
+	"strings"
 	"sync"
 )
 
@@ -119,17 +121,96 @@ func CollectSystemData() SystemData {
 		listeningPorts, _ = GetSystemListeningPorts()
 	}()
 
+	var dockerAvailable bool
+	var dockerVersion string
+	var containers []ContainerBasicInfo
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dockerAvailable, dockerVersion, containers = detectDocker()
+	}()
+
 	wg.Wait()
 
-	log.Debug().Msgf("CollectSystemData: packages=%d, services=%d, ports=%d",
-		len(installedPackages), len(services), len(listeningPorts))
+	log.Debug().Msgf("CollectSystemData: packages=%d, services=%d, ports=%d, docker=%t, containers=%d",
+		len(installedPackages), len(services), len(listeningPorts), dockerAvailable, len(containers))
 
 	SystemData := SystemData{
-		Uptime:         UptimeValue,
-		Packages:       installedPackages,
-		Distro:         distro,
-		Services:       services,
-		ListeningPorts: listeningPorts,
+		Uptime:          UptimeValue,
+		Packages:        installedPackages,
+		Distro:          distro,
+		Services:        services,
+		ListeningPorts:  listeningPorts,
+		DockerAvailable: dockerAvailable,
+		DockerVersion:   dockerVersion,
+		Containers:      containers,
 	}
 	return SystemData
+}
+
+// detectDocker performs a quick Docker detection for system info collection.
+// Returns availability, version, and a basic container list.
+func detectDocker() (bool, string, []ContainerBasicInfo) {
+	// Check if Docker is available
+	cmd := exec.Command("docker", "info", "--format", "{{.ServerVersion}}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, "", nil
+	}
+	version := strings.TrimSpace(string(output))
+	if version == "" {
+		return false, "", nil
+	}
+
+	// List containers
+	format := "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}\t{{.Ports}}\t{{.Networks}}\t{{.Labels}}"
+	cmd = exec.Command("docker", "ps", "-a", "--no-trunc", "--format", format)
+	output, err = cmd.Output()
+	if err != nil {
+		// Docker is available but ps failed — still report docker as available
+		return true, version, nil
+	}
+
+	var containers []ContainerBasicInfo
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.SplitN(line, "\t", 8)
+		if len(fields) < 8 {
+			continue
+		}
+
+		name := strings.TrimPrefix(fields[1], "/")
+		labels := fields[7]
+
+		ct := ContainerBasicInfo{
+			ID:       fields[0],
+			Name:     name,
+			Image:    fields[2],
+			Status:   fields[3],
+			State:    fields[4],
+			Ports:    fields[5],
+			Networks: fields[6],
+		}
+
+		// Extract Compose labels
+		for _, label := range strings.Split(labels, ",") {
+			kv := strings.SplitN(label, "=", 2)
+			if len(kv) != 2 {
+				continue
+			}
+			switch kv[0] {
+			case "com.docker.compose.project":
+				ct.ComposeProject = kv[1]
+			case "com.docker.compose.service":
+				ct.ComposeService = kv[1]
+			}
+		}
+
+		containers = append(containers, ct)
+	}
+
+	return true, version, containers
 }

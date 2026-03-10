@@ -41,6 +41,7 @@ func main() {
 	}
 
 	fmt.Printf("Log file location: %s \n", *fLogFile)
+	logger.LogFilePath = *fLogFile
 	if *fDebug {
 		logger.SetupLogLevel(true)
 	} else {

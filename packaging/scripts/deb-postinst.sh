@@ -5,6 +5,7 @@ if [ -f /etc/init.d/alertpriority-agent ] ; then
 fi
 
 mkdir -p /var/lib/alertpriority-agent
+mkdir -p /var/log/alertpriority-agent
 mkdir -p /etc/alertpriority-agent/
 
 

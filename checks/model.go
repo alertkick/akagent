@@ -39,11 +39,27 @@ type HostData struct {
 
 // SystemData - collect all system metrics
 type SystemData struct {
-	Uptime         uint64              `json:"uptime"`
-	Packages       []PackageInfo       `json:"packages"`
-	Distro         DistroStruct        `json:"distro"`
-	Services       []SystemServiceInfo `json:"services,omitempty"`
-	ListeningPorts []SystemPortInfo    `json:"listening_ports,omitempty"`
+	Uptime           uint64              `json:"uptime"`
+	Packages         []PackageInfo       `json:"packages"`
+	Distro           DistroStruct        `json:"distro"`
+	Services         []SystemServiceInfo `json:"services,omitempty"`
+	ListeningPorts   []SystemPortInfo    `json:"listening_ports,omitempty"`
+	DockerAvailable  bool                `json:"docker_available,omitempty"`
+	DockerVersion    string              `json:"docker_version,omitempty"`
+	Containers       []ContainerBasicInfo `json:"containers,omitempty"`
+}
+
+// ContainerBasicInfo is a lightweight container info for system info collection
+type ContainerBasicInfo struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Image          string `json:"image"`
+	Status         string `json:"status"`
+	State          string `json:"state"`
+	Ports          string `json:"ports"`
+	Networks       string `json:"networks"`
+	ComposeProject string `json:"compose_project,omitempty"`
+	ComposeService string `json:"compose_service,omitempty"`
 }
 
 // SystemServiceInfo represents a service for system info collection

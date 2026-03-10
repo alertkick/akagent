@@ -3,6 +3,7 @@
 [ -x /sbin/chkconfig ] && /sbin/chkconfig --add alertpriority-agent
 
 mkdir -p /var/lib/alertpriority-agent
+mkdir -p /var/log/alertpriority-agent
 mkdir -p /usr/lib/alertpriority-agent/plugins
 mkdir -p /etc/alertpriority-agent/
 

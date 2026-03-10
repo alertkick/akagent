@@ -4,7 +4,8 @@ project_name: alertpriority-agent
 
 before:
   hooks:
-    - go mod tidy
+    - go mod tidy -v
+    - git checkout -- go.mod go.sum
 
 builds:
   - id: linux
@@ -19,6 +20,8 @@ builds:
       - arm64
     ldflags:
       - -s -w -X main.Version={{.Version}} -X apagent/ebpf.agentVersion={{.Version}}
+    flags:
+      - -buildvcs=false
 
   - id: windows
     main: ./cmd
@@ -33,23 +36,25 @@ builds:
       - -s -w -X main.Version={{.Version}}
     tags:
       - noebpf
+    flags:
+      - -buildvcs=false
 
 archives:
   - id: linux-archive
-    ids:
+    builds:
       - linux
-    formats: tar.gz
+    format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
   - id: windows-archive
-    ids:
+    builds:
       - windows
-    formats: zip
+    format: zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 nfpms:
   - id: deb
-    ids:
+    builds:
       - linux
     package_name: alertpriority-agent
     vendor: AlertPriority
@@ -88,7 +93,7 @@ nfpms:
       postremove: packaging/scripts/deb-postrm.sh
 
   - id: rpm
-    ids:
+    builds:
       - linux
     package_name: alertpriority-agent
     vendor: AlertPriority

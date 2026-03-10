@@ -197,20 +197,30 @@ func (e *RuleEngine) evaluateCondition(condition string, ctx *EventContext) bool
 func (e *RuleEngine) evalExpr(expr string, ctx *EventContext) bool {
 	expr = strings.TrimSpace(expr)
 
-	// Handle parentheses
+	// Handle parentheses: strip outer parens only if the opening '(' at position 0
+	// matches the closing ')' at the last position. We detect this by tracking depth;
+	// if depth reaches 0 before the final character, the first '(' closed earlier
+	// and does NOT pair with the trailing ')'.
 	if strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
-		// Find matching closing paren
 		depth := 0
+		matched := false
 		for i, c := range expr {
 			if c == '(' {
 				depth++
 			} else if c == ')' {
 				depth--
-				if depth == 0 && i == len(expr)-1 {
-					// The whole expression is wrapped in parens
-					return e.evalExpr(expr[1:len(expr)-1], ctx)
+				if depth == 0 {
+					if i == len(expr)-1 {
+						// The opening '(' matches the final ')' — safe to strip
+						matched = true
+					}
+					// depth hit 0: whether matched or not, stop scanning
+					break
 				}
 			}
+		}
+		if matched {
+			return e.evalExpr(expr[1:len(expr)-1], ctx)
 		}
 	}
 

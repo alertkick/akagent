@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"sync"
 	"time"
@@ -27,9 +28,26 @@ const (
 	StateShuttingDown
 )
 
+const (
+	maxBackoffDelay     = 5 * time.Minute
+	initialBackoffDelay = time.Second
+)
+
 var (
 	ErrNotConnected = errors.New("not connected")
 )
+
+// backoffDelay doubles the delay up to maxBackoffDelay and adds jitter (±25%)
+// so that agents don't all reconnect at the same time.
+func backoffDelay(current time.Duration) time.Duration {
+	next := current * 2
+	if next > maxBackoffDelay {
+		next = maxBackoffDelay
+	}
+	// Add ±25% jitter
+	jitter := time.Duration(float64(next) * (0.75 + rand.Float64()*0.5))
+	return jitter
+}
 
 type Connection struct {
 	agentID            string
@@ -156,7 +174,7 @@ func (c *Connection) StartConnection() {
 	}
 
 	// Continuously try to connect to the RPC server until successful or we are in shutdown state
-	delay := time.Second
+	delay := initialBackoffDelay
 	for c.State() == StateDisconnected && c.State() != StateShuttingDown {
 		c.log.Info().Msg("Connection.StartConnection - Connecting to RPC server")
 		c.log.Info().Str("endpoint", c.endpointAddr).Bool("insecure", c.TLSInsecure).Msg("Attempting to connect")
@@ -192,13 +210,16 @@ func (c *Connection) StartConnection() {
 					Msg("Connection.StartConnection - Error connecting to RPC server")
 			}
 			c.state = StateDisconnected
+			sleepDuration := backoffDelay(delay)
 			c.log.Info().
 				Err(err).
 				Str("endpoint", c.endpointAddr).
+				Float64("retry_seconds", sleepDuration.Seconds()).
 				Msg("Connection.StartConnection - Waiting before retrying")
-			time.Sleep(delay)
-			if delay < 10*time.Minute {
-				delay = delay * 2
+			time.Sleep(sleepDuration)
+			delay = delay * 2
+			if delay > maxBackoffDelay {
+				delay = maxBackoffDelay
 			}
 			continue
 		} else {
@@ -216,11 +237,12 @@ func (c *Connection) StartConnection() {
 			if err != nil {
 				c.log.Err(err).Msg("Connection.StartConnection - Error during connection handshake")
 				c.state = StateDisconnected
-				c.log.Info().Msgf("Connection.StartConnection - Waiting %s before retrying", delay)
-				time.Sleep(delay)
-				// Exponential backoff not more than 10 minutes
-				if delay < 10*time.Minute {
-					delay = delay * 2
+				sleepDuration := backoffDelay(delay)
+				c.log.Info().Float64("retry_seconds", sleepDuration.Seconds()).Msg("Connection.StartConnection - Waiting before retrying")
+				time.Sleep(sleepDuration)
+				delay = delay * 2
+				if delay > maxBackoffDelay {
+					delay = maxBackoffDelay
 				}
 				continue
 			} else {
@@ -228,7 +250,7 @@ func (c *Connection) StartConnection() {
 				c.state = StateConnected
 				c.wg.Add(1)
 				go c.startHeartbeatLoop(&c.wg)
-				delay = time.Second
+				delay = initialBackoffDelay
 			}
 		}
 		if logger.IsSectionEnabled(logger.SectionConnection) {
@@ -548,16 +570,30 @@ func (c *Connection) startHeartbeatLoop(wg *sync.WaitGroup) {
 	for c.State() == StateConnected {
 		err := c.doHeartbeat()
 		if err != nil {
-			duration = duration * 2
-			c.log.Err(err).Msgf("Connection.startHeartbeatLoop - Error sending heartbeat, backing off, next try in %f seconds", duration.Seconds())
 			failureCount++
+			retryDuration := backoffDelay(duration)
+			c.log.Err(err).
+				Int("failure_count", failureCount).
+				Float64("retry_seconds", retryDuration.Seconds()).
+				Msg("Connection.startHeartbeatLoop - Error sending heartbeat, backing off")
 			if failureCount > 3 {
-				c.log.Err(err).Msgf("Connection.startHeartbeatLoop - Error sending heartbeat, backing off, next try in %f seconds", duration.Seconds())
+				c.log.Warn().Msg("Connection.startHeartbeatLoop - too many heartbeat failures, closing connection to trigger reconnect")
 				c.state = StateDisconnected
+				if c.conn != nil {
+					c.conn.Close() // Close the TCP socket to unblock connReaderLoop
+				}
 				break
 			}
+			time.Sleep(retryDuration)
+			duration = duration * 2
+			if duration > maxBackoffDelay {
+				duration = maxBackoffDelay
+			}
+		} else {
+			failureCount = 0
+			duration = time.Duration(c.heartbeatInterval) * time.Second
+			time.Sleep(duration)
 		}
-		time.Sleep(duration)
 	}
 	if logger.IsSectionEnabled(logger.SectionHeartbeat) {
 		c.log.Debug().Msg("Connection.startHeartbeatLoop - done")

@@ -111,19 +111,19 @@ production/deploy: confirm tidy audit no-dirty
 .PHONY: licenses
 licenses:
 	go install github.com/google/go-licenses@latest
-	go-licenses save ./... --save_path=./third_party_licenses --force
+	go-licenses save ./cmd/... --ignore apagent --save_path=./third_party_licenses --force
 
 ## licenses/check: verify no restricted (GPL) licenses are used
 .PHONY: licenses/check
 licenses/check:
 	go install github.com/google/go-licenses@latest
-	go-licenses check ./... --disallowed_types=restricted
+	go-licenses check ./cmd/... --ignore apagent --disallowed_types=restricted
 
 ## licenses/report: generate a CSV report of all dependency licenses
 .PHONY: licenses/report
 licenses/report:
 	go install github.com/google/go-licenses@latest
-	go-licenses report ./...
+	go-licenses report ./cmd/... --ignore apagent
 
 ## release/build: build all platform packages with goreleaser (no publish)
 .PHONY: release/build
@@ -139,25 +139,38 @@ release/snapshot: bpf/generate
 clean:
 	rm -rf build dist
 
+## package: build all packages using Docker + GoReleaser (same as Jenkins CI)
 .PHONY: package
 package: clean
-	./version.sh -b
-	$(MAKE) build
-	cmake -H. -Bbuild
-	cmake --build build -- package
+	docker build -f Dockerfile.build -t apagent-build .
+	docker rm -f apagent-builder 2>/dev/null || true
+	docker create --name apagent-builder -w /build apagent-build sh -c '\
+		set -e && \
+		echo "=== Downloading modules ===" && \
+		go mod download && \
+		echo "=== License Check ===" && \
+		go-licenses check ./cmd/... --ignore apagent --disallowed_types=restricted && \
+		echo "=== License Collect ===" && \
+		go-licenses save ./cmd/... --ignore apagent --save_path=./third_party_licenses --force && \
+		echo "=== Build & Package ===" && \
+		goreleaser release --clean --skip=publish && \
+		echo "=== Generate Per-Package Checksums ===" && \
+		cd dist && \
+		for f in *.deb *.rpm *.tar.gz *.zip; do \
+			[ -f "$$f" ] || continue; \
+			sha256sum "$$f" > "$${f}.checksum"; \
+			echo "  $${f}.checksum"; \
+		done && \
+		cd .. && \
+		echo "=== Dist Contents ===" && \
+		ls -lh dist/'
+	docker cp $$(pwd)/. apagent-builder:/build/
+	docker start -a apagent-builder
+	docker cp apagent-builder:/build/dist/. $$(pwd)/dist/
+	docker rm apagent-builder
 
-.PHONY: packagerepo
-packagerepo:
-	cmake --build build -- packagerepo
-
-.PHONY: packagerepoupload
-packagerepoupload:
-	cmake --build build -- packagerepoupload
-
-.PHONY: siggen
-siggen:
-	cmake --build build -- siggen
-
-.PHONY: siggenupload
-siggenupload:
-	cmake --build build -- siggenupload
+## package/upload: upload packages to download server
+.PHONY: package/upload
+package/upload:
+	scp dist/*.deb dist/*.rpm dist/*.tar.gz dist/*.zip dist/*.checksum \
+		root@endpoint1.ssidhu.io:/data/containers/ak-wildcard-api/download-packages/
