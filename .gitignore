@@ -1,6 +1,7 @@
 # Build artifacts
 build/
 dist/
+third_party_licenses/
 *.exe
 *.exe~
 *.dll
