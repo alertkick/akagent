@@ -25,8 +25,15 @@ if [ "$LOCAL" != "$REMOTE" ]; then
     exit 1
 fi
 
-# Calculate next version
-version=$(git describe --tags $(git rev-list --tags --max-count=1) 2>/dev/null)
+# Ensure there are commits to release
+COMMIT_COUNT=$(git rev-list --count origin/main..develop)
+if [ "$COMMIT_COUNT" -eq 0 ]; then
+    echo "ERROR: No new commits on develop since last release. Nothing to release."
+    exit 1
+fi
+
+# Calculate next version (sort tags by semver to get the actual latest)
+version=$(git tag -l 'v*' --sort=-version:refname | head -1)
 if [ -z "$version" ]; then
     version="v0.0.0"
     echo "No existing tags found, starting from: $version"
@@ -118,10 +125,15 @@ git checkout main
 git pull origin main
 git tag -a $nextVersion -m "Release $nextVersion"
 git push --tags
+
+# Reset develop to main so they're in sync after squash merge
 git checkout develop
+git reset --hard origin/main
+git push --force-with-lease origin develop
 
 echo ""
 echo "Release ${nextVersion} complete!"
 echo "  - PR merged: ${PR_URL}"
 echo "  - Tag ${nextVersion} pushed to main"
+echo "  - develop branch reset to main"
 echo "  - Jenkins will build and upload the release"
