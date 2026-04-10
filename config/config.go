@@ -15,14 +15,31 @@ import (
 
 // Config struct
 type Config struct {
-	Debug             bool
-	Subdomain         string
-	AgentID           string
-	AgentName         string
-	AgentToken        string
-	Endpoint          string
-	TLSCAFilePath     string
-	TLSInsecure       bool
+	Debug      bool
+	Subdomain  string
+	AgentID    string
+	AgentName  string
+	AgentToken string
+
+	// Endpoint is the legacy single-endpoint address ("host:port"). It is still
+	// honoured for backward compatibility — if Endpoints is empty and Endpoint
+	// is set, the agent will connect to just that one endpoint.
+	Endpoint string
+
+	// Endpoints is the list of regional endpoint addresses ("host:port") the
+	// agent should maintain simultaneous connections to. The agent heartbeats
+	// to all of them so each region knows the agent is alive, but only sends
+	// metrics and security events to the primary endpoint.
+	Endpoints []string `json:"endpoints,omitempty"`
+
+	// PrimaryEndpoint must match one of the entries in Endpoints (or equal
+	// Endpoint in legacy mode). It identifies which region this tenant's data
+	// is stored in. Metrics and security events post here. Defaults to the
+	// first Endpoints entry (or Endpoint) if unset.
+	PrimaryEndpoint string `json:"primary_endpoint,omitempty"`
+
+	TLSCAFilePath string
+	TLSInsecure   bool
 	BpfDir            string
 	MapDir            string
 	TracingPolicy     string

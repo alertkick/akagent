@@ -96,16 +96,27 @@ func (c *Connection) IsConnected() bool {
 	return c.state == StateConnected
 }
 
+// NewConnection creates a connection using conf.Endpoint as the target address.
+// Kept for backward compatibility with single-endpoint callers; new callers
+// (multi-endpoint via Pool) should use NewConnectionForEndpoint.
 func NewConnection(conf *config.Config, log zerolog.Logger, version string) *Connection {
-	// Create agent-contextualized logger with agent_id and subdomain
+	return NewConnectionForEndpoint(conf, conf.Endpoint, log, version)
+}
+
+// NewConnectionForEndpoint creates a connection to a specific endpoint address,
+// independent of the address stored in conf.Endpoint. Used by Pool to spin up
+// one connection per regional endpoint.
+func NewConnectionForEndpoint(conf *config.Config, endpoint string, log zerolog.Logger, version string) *Connection {
+	// Create agent-contextualized logger with agent_id, subdomain and endpoint
 	agentLog := log.With().
 		Str("agent_id", conf.AgentID).
 		Str("subdomain", conf.Subdomain).
+		Str("endpoint", endpoint).
 		Str("component", "connection").
 		Logger()
 
 	connection := &Connection{
-		endpointAddr:      conf.Endpoint,
+		endpointAddr:      endpoint,
 		agentID:           conf.AgentID,
 		agentName:         conf.AgentName,
 		subdomain:         conf.Subdomain,
@@ -127,6 +138,9 @@ func NewConnection(conf *config.Config, log zerolog.Logger, version string) *Con
 	go connection.StartConnection()
 	return connection
 }
+
+// Endpoint returns the address this connection is dialling.
+func (c *Connection) Endpoint() string { return c.endpointAddr }
 
 func (c *Connection) StartConnection() {
 	// Load CA certificate

@@ -31,7 +31,7 @@ func init() {
 }
 
 type agent struct {
-	conn               *client.Connection
+	conn               *client.Pool
 	agentToken         string
 	AgentID            string
 	AgentName          string
@@ -62,7 +62,7 @@ type agent struct {
 
 func NewAgentClient(conf *config.Config, kernalVersion string, log zerolog.Logger, version string) (*agent, error) {
 
-	RPCConn := client.NewConnection(conf, log, version)
+	RPCConn := client.NewPool(conf, log, version)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	a := agent{
