@@ -108,7 +108,12 @@ ls -lh dist/
                             -e AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION} \
                             --entrypoint sleep \
                             amazon/aws-cli 3600
-                        trap 'docker rm -f ${UPLOADER} 2>/dev/null || true' EXIT
+                        PAYLOAD_FILE=""
+                        cleanup() {
+                            docker rm -f ${UPLOADER} 2>/dev/null || true
+                            [ -n "$PAYLOAD_FILE" ] && rm -f "$PAYLOAD_FILE"
+                        }
+                        trap cleanup EXIT
 
                         docker exec ${UPLOADER} mkdir -p /dist
                         docker cp dist/. ${UPLOADER}:/dist/
@@ -123,19 +128,20 @@ ls -lh dist/
                         done
 
                         echo "=== Registering with superadmin ==="
-                        # Build JSON payload with file list
-                        PACKAGES="["
+                        # Build payload with printf + single-quoted format strings so Jenkins/Groovy
+                        # doesn't mangle backslash-escaped quotes. Write to a file, POST with -d @.
+                        PAYLOAD_FILE=$(mktemp)
                         FIRST=true
+                        printf '{"version":"%s","tag":"%s","packages":[' "$TAG_VERSION" "$TAG_NAME" > "$PAYLOAD_FILE"
                         for f in dist/*.deb dist/*.rpm dist/*.tar.gz; do
                             [ -f "$f" ] || continue
                             BASENAME=$(basename "$f")
                             CHECKSUM=""
                             if [ -f "${f}.checksum" ]; then
-                                CHECKSUM=$(cat "${f}.checksum" | awk '{print "sha256:"$1}')
+                                CHECKSUM=$(awk '{print "sha256:"$1}' "${f}.checksum")
                             fi
                             SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null || echo 0)
 
-                            # Detect os/arch/format from filename
                             case "$BASENAME" in
                                 *.deb)    FORMAT="deb" ;;
                                 *.rpm)    FORMAT="rpm" ;;
@@ -148,16 +154,19 @@ ls -lh dist/
                                 *) continue ;;
                             esac
 
-                            if [ "$FIRST" = true ]; then FIRST=false; else PACKAGES="$PACKAGES,"; fi
-                            PACKAGES="$PACKAGES{\"os\":\"linux\",\"arch\":\"$ARCH\",\"format\":\"$FORMAT\",\"filename\":\"$BASENAME\",\"checksum\":\"$CHECKSUM\",\"size\":$SIZE}"
+                            if [ "$FIRST" = true ]; then FIRST=false; else printf ',' >> "$PAYLOAD_FILE"; fi
+                            printf '{"os":"linux","arch":"%s","format":"%s","filename":"%s","checksum":"%s","size":%s}' \
+                                "$ARCH" "$FORMAT" "$BASENAME" "$CHECKSUM" "$SIZE" >> "$PAYLOAD_FILE"
                         done
-                        PACKAGES="$PACKAGES]"
+                        printf ']}' >> "$PAYLOAD_FILE"
 
-                        PAYLOAD=$(printf '{"version":"%s","tag":"%s","packages":%s}' "$TAG_VERSION" "$TAG_NAME" "$PACKAGES")
-                        echo "Payload: $PAYLOAD"
+                        echo "Payload:"
+                        cat "$PAYLOAD_FILE"
+                        echo
+
                         curl --fail-with-body -sS --max-time 30 -X POST "${SUPERADMIN_URL}/fleet-api/agent-packages/register" \
                             -H "Content-Type: application/json" \
-                            -d "$PAYLOAD"
+                            --data-binary "@$PAYLOAD_FILE"
                         echo
                         echo "=== Done ==="
                     '''
