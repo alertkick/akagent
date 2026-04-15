@@ -96,23 +96,30 @@ ls -lh dist/
                     sh '''
                         set -eu
                         AWS_DEFAULT_REGION=us-east-1
+                        UPLOADER=pkg-uploader-${BUILD_NUMBER}
 
-                        # Run aws CLI in a container so we don't depend on it being installed
-                        # on the Jenkins agent. Bucket policy grants public read on packages/*,
-                        # so no per-object ACL needed.
-                        AWS_RUN="docker run --rm \
+                        # Jenkins runs in Docker against the host daemon, so bind-mounting
+                        # ${WORKSPACE}/dist fails (path doesn't exist on host). Use the same
+                        # docker create + docker cp pattern as the build stage.
+                        docker rm -f ${UPLOADER} 2>/dev/null || true
+                        docker run -d --name ${UPLOADER} \
                             -e AWS_ACCESS_KEY_ID \
                             -e AWS_SECRET_ACCESS_KEY \
                             -e AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION} \
-                            -v ${WORKSPACE}/dist:/dist \
-                            amazon/aws-cli"
+                            --entrypoint sleep \
+                            amazon/aws-cli 3600
+                        trap 'docker rm -f ${UPLOADER} 2>/dev/null || true' EXIT
+
+                        docker exec ${UPLOADER} mkdir -p /dist
+                        docker cp dist/. ${UPLOADER}:/dist/
 
                         echo "=== Uploading packages to S3 ==="
+                        # Bucket policy grants public read on packages/*, so no per-object ACL.
                         for f in dist/*.deb dist/*.rpm dist/*.tar.gz dist/*.zip dist/*.checksum; do
                             [ -f "$f" ] || continue
                             BASENAME=$(basename "$f")
                             echo "  uploading $BASENAME → s3://${S3_BUCKET}/packages/v${TAG_VERSION}/"
-                            $AWS_RUN s3 cp "/dist/${BASENAME}" "s3://${S3_BUCKET}/packages/v${TAG_VERSION}/${BASENAME}"
+                            docker exec ${UPLOADER} aws s3 cp "/dist/${BASENAME}" "s3://${S3_BUCKET}/packages/v${TAG_VERSION}/${BASENAME}"
                         done
 
                         echo "=== Registering with superadmin ==="
@@ -162,6 +169,7 @@ ls -lh dist/
     post {
         always {
             sh 'docker rm -f ${BUILD_CONTAINER} 2>/dev/null || true'
+            sh 'docker rm -f pkg-uploader-${BUILD_NUMBER} 2>/dev/null || true'
             archiveArtifacts artifacts: 'dist/**/*', allowEmptyArchive: true
             cleanWs()
         }
