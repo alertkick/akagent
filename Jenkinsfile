@@ -43,10 +43,10 @@ echo "=== Downloading modules ==="
 go mod download
 
 echo "=== License Check ==="
-go-licenses check ./cmd/... --ignore apagent --disallowed_types=restricted
+go-licenses check ./cmd/... --ignore akagent --disallowed_types=restricted
 
 echo "=== License Collect ==="
-go-licenses save ./cmd/... --ignore apagent --save_path=./third_party_licenses --force
+go-licenses save ./cmd/... --ignore akagent --save_path=./third_party_licenses --force
 
 echo "=== Test ==="
 CGO_ENABLED=1 go test -race ./...

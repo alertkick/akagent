@@ -111,19 +111,19 @@ production/deploy: confirm tidy audit no-dirty
 .PHONY: licenses
 licenses:
 	go install github.com/google/go-licenses@latest
-	go-licenses save ./cmd/... --ignore apagent --save_path=./third_party_licenses --force
+	go-licenses save ./cmd/... --ignore akagent --save_path=./third_party_licenses --force
 
 ## licenses/check: verify no restricted (GPL) licenses are used
 .PHONY: licenses/check
 licenses/check:
 	go install github.com/google/go-licenses@latest
-	go-licenses check ./cmd/... --ignore apagent --disallowed_types=restricted
+	go-licenses check ./cmd/... --ignore akagent --disallowed_types=restricted
 
 ## licenses/report: generate a CSV report of all dependency licenses
 .PHONY: licenses/report
 licenses/report:
 	go install github.com/google/go-licenses@latest
-	go-licenses report ./cmd/... --ignore apagent
+	go-licenses report ./cmd/... --ignore akagent
 
 ## release/build: build all platform packages with goreleaser (no publish)
 .PHONY: release/build
@@ -149,9 +149,9 @@ package: clean
 		echo "=== Downloading modules ===" && \
 		go mod download && \
 		echo "=== License Check ===" && \
-		go-licenses check ./cmd/... --ignore apagent --disallowed_types=restricted && \
+		go-licenses check ./cmd/... --ignore akagent --disallowed_types=restricted && \
 		echo "=== License Collect ===" && \
-		go-licenses save ./cmd/... --ignore apagent --save_path=./third_party_licenses --force && \
+		go-licenses save ./cmd/... --ignore akagent --save_path=./third_party_licenses --force && \
 		echo "=== Build & Package ===" && \
 		goreleaser release --clean --skip=publish && \
 		echo "=== Generate Per-Package Checksums ===" && \
