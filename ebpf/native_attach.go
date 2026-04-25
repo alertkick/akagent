@@ -5,7 +5,7 @@ package ebpf
 import (
 	"fmt"
 
-	"apagent/logger"
+	"akagent/logger"
 
 	"github.com/cilium/ebpf/link"
 )

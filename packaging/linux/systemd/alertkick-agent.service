@@ -3,7 +3,7 @@ After=network.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/alertpriority-agent --logfile /var/log/alertpriority-agent/apagent.log
+ExecStart=/usr/bin/alertkick-agent --logfile /var/log/alertkick-agent/apagent.log
 Restart=always
 RestartSec=5
 

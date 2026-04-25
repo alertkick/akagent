@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# AlertPriority Agent Updater Script
+# AlertKick Agent Updater Script
 #
 # This script handles safe agent binary updates with automatic rollback.
 # It is installed alongside the agent via the .deb package.
 #
 # Usage:
-#   alertpriority-agent-updater.sh --package <path_to_deb> [--current-version <version>]
+#   alertkick-agent-updater.sh --package <path_to_deb> [--current-version <version>]
 #
 # Exit codes:
 #   0 - Update successful
@@ -17,14 +17,14 @@
 set -euo pipefail
 
 # Configuration
-AGENT_SERVICE="alertpriority-agent"
-AGENT_BINARY="/usr/local/bin/alertpriority-agent"
-BACKUP_BINARY="/usr/local/bin/alertpriority-agent.backup"
-LOG_DIR="/var/log/alertpriority-agent"
+AGENT_SERVICE="alertkick-agent"
+AGENT_BINARY="/usr/local/bin/alertkick-agent"
+BACKUP_BINARY="/usr/local/bin/alertkick-agent.backup"
+LOG_DIR="/var/log/alertkick-agent"
 LOG_FILE="${LOG_DIR}/update.log"
 HEALTH_CHECK_TIMEOUT=30
 HEALTH_CHECK_INTERVAL=2
-MIGRATIONS_DIR="/etc/alertpriority-agent/migrations"
+MIGRATIONS_DIR="/etc/alertkick-agent/migrations"
 
 # Parse arguments
 PACKAGE_PATH=""
@@ -65,7 +65,7 @@ log() {
 mkdir -p "${LOG_DIR}"
 
 log "INFO" "=========================================="
-log "INFO" "AlertPriority Agent Update Started"
+log "INFO" "AlertKick Agent Update Started"
 log "INFO" "=========================================="
 
 # Validate arguments
@@ -93,8 +93,8 @@ fi
 
 # Step 2: Backup current config
 log "INFO" "Step 2: Backing up configuration"
-if [[ -f "/etc/alertpriority-agent/alertpriority-agent.conf" ]]; then
-    cp "/etc/alertpriority-agent/alertpriority-agent.conf" "/etc/alertpriority-agent/alertpriority-agent.conf.backup"
+if [[ -f "/etc/alertkick-agent/alertkick-agent.conf" ]]; then
+    cp "/etc/alertkick-agent/alertkick-agent.conf" "/etc/alertkick-agent/alertkick-agent.conf.backup"
     log "INFO" "Config backup created"
 fi
 
@@ -159,7 +159,7 @@ while [[ ${elapsed} -lt ${HEALTH_CHECK_TIMEOUT} ]]; do
 
     if systemctl is-active --quiet "${AGENT_SERVICE}" 2>/dev/null; then
         # Additional check: verify the process is actually running
-        if pgrep -f "alertpriority-agent" > /dev/null 2>&1; then
+        if pgrep -f "alertkick-agent" > /dev/null 2>&1; then
             log "INFO" "Health check passed after ${elapsed}s - agent process is running"
             healthy=true
             break
@@ -181,7 +181,7 @@ if ${healthy}; then
 
     # Remove backup
     rm -f "${BACKUP_BINARY}"
-    rm -f "/etc/alertpriority-agent/alertpriority-agent.conf.backup"
+    rm -f "/etc/alertkick-agent/alertkick-agent.conf.backup"
 
     # Clean up downloaded package
     rm -f "${PACKAGE_PATH}"
@@ -206,8 +206,8 @@ else
         chmod +x "${AGENT_BINARY}"
 
         # Restore config backup if it exists
-        if [[ -f "/etc/alertpriority-agent/alertpriority-agent.conf.backup" ]]; then
-            cp "/etc/alertpriority-agent/alertpriority-agent.conf.backup" "/etc/alertpriority-agent/alertpriority-agent.conf"
+        if [[ -f "/etc/alertkick-agent/alertkick-agent.conf.backup" ]]; then
+            cp "/etc/alertkick-agent/alertkick-agent.conf.backup" "/etc/alertkick-agent/alertkick-agent.conf"
         fi
 
         # Start with old version
@@ -218,7 +218,7 @@ else
         if systemctl is-active --quiet "${AGENT_SERVICE}" 2>/dev/null; then
             log "INFO" "Rollback successful - agent running with previous version"
             rm -f "${BACKUP_BINARY}"
-            rm -f "/etc/alertpriority-agent/alertpriority-agent.conf.backup"
+            rm -f "/etc/alertkick-agent/alertkick-agent.conf.backup"
             exit 1
         else
             log "ERROR" "Rollback failed - agent service could not start with previous version"

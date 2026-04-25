@@ -2,8 +2,8 @@
 
 . /etc/rc.subr
 
-name=alertpriority-agent
-rcvar=alertpriority_agent_enable
+name=alertkick-agent
+rcvar=alertkick_agent_enable
 logfile="/var/log/${name}.log"
 pidfile="/var/run/${name}.pid"
 start_cmd="/usr/sbin/daemon -p ${pidfile} /usr/bin/${name} --logfile ${logfile}"

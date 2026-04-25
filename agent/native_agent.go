@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"apagent/client"
-	"apagent/ebpf"
+	"akagent/client"
+	"akagent/ebpf"
 )
 
 // NativeConfigGetStored fetches the stored native agent config from the API on startup
@@ -82,7 +82,7 @@ func (a *agent) NativeConfigGetStored() error {
 	return nil
 }
 
-// GetNativeAgentConfig requests the native agent config from apweb
+// GetNativeAgentConfig requests the native agent config from alertkick-ui
 func (a *agent) GetNativeAgentConfig() error {
 	if a.platformData.nativeAgent == nil {
 		return errors.New("native agent not initialized")
@@ -120,7 +120,7 @@ func (a *agent) GetNativeAgentConfig() error {
 		a.log.Debug().Msgf("agent.GetNativeAgentConfig - received response for rqid: %s", requestID)
 
 		if response.Err.Message != "" {
-			// If apweb doesn't have config yet, that's okay - use defaults
+			// If alertkick-ui doesn't have config yet, that's okay - use defaults
 			if response.Err.Code == 404 {
 				a.log.Debug().Msg("agent.GetNativeAgentConfig - no config on server, using defaults")
 				return nil
@@ -147,7 +147,7 @@ func (a *agent) GetNativeAgentConfig() error {
 			return err
 		}
 
-		a.log.Info().Msg("agent.GetNativeAgentConfig - successfully applied config from apweb")
+		a.log.Info().Msg("agent.GetNativeAgentConfig - successfully applied config from alertkick-ui")
 
 	case <-time.After(time.Duration(a.timeout) * time.Second):
 		err = errors.New("native_config.get response timeout")
@@ -158,7 +158,7 @@ func (a *agent) GetNativeAgentConfig() error {
 	return nil
 }
 
-// applyNativeAgentConfig applies the config received from apweb to the native agent
+// applyNativeAgentConfig applies the config received from alertkick-ui to the native agent
 func (a *agent) applyNativeAgentConfig(webConfig client.NativeAgentConfig) error {
 	if a.platformData.nativeAgent == nil {
 		return errors.New("native agent not initialized")
@@ -222,7 +222,7 @@ func convertWebConfigToNative(webConfig client.NativeAgentConfig) ebpf.NativeCon
 	return config
 }
 
-// handleNativeConfigGetRequest handles the native_config.get request from apweb
+// handleNativeConfigGetRequest handles the native_config.get request from alertkick-ui
 func (a *agent) handleNativeConfigGetRequest(req client.Request) {
 	a.log.Debug().Msg("agent.handleNativeConfigGetRequest - processing request")
 
@@ -294,7 +294,7 @@ func (a *agent) sendNativeConfigResponse(req client.Request, response client.Nat
 	}
 }
 
-// handleNativeConfigUpdateRequest handles the native_config.update request from apweb
+// handleNativeConfigUpdateRequest handles the native_config.update request from alertkick-ui
 func (a *agent) handleNativeConfigUpdateRequest(req client.Request) {
 	a.log.Debug().Msg("agent.handleNativeConfigUpdateRequest - processing request")
 

@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"apagent/ebpf/bpfgen"
-	"apagent/ebpf/rules"
-	"apagent/logger"
+	"akagent/ebpf/bpfgen"
+	"akagent/ebpf/rules"
+	"akagent/logger"
 
 	"github.com/cilium/ebpf/link"
 )
@@ -484,7 +484,7 @@ func (a *NativeEBPFAgent) GetConfigPath() string {
 }
 
 // DefaultRulesPath is the default location for compiled detection rules
-const DefaultRulesPath = "/etc/alertpriority-agent/rules.yaml"
+const DefaultRulesPath = "/etc/alertkick-agent/rules.yaml"
 
 // GetRules returns the rule files (native agent doesn't use external rules)
 func (a *NativeEBPFAgent) GetRules() ([]RuleFile, error) {
@@ -563,7 +563,7 @@ func (a *NativeEBPFAgent) LoadRulesFromDisk() error {
 }
 
 func (a *NativeEBPFAgent) saveRulesToDisk(yamlData []byte) error {
-	dir := "/etc/alertpriority-agent"
+	dir := "/etc/alertkick-agent"
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create rules directory: %w", err)
 	}

@@ -3,10 +3,10 @@
 package agent
 
 import (
-	"apagent/client"
-	"apagent/ebpf"
-	"apagent/internal/api"
-	"apagent/logger"
+	"akagent/client"
+	"akagent/ebpf"
+	"akagent/internal/api"
+	"akagent/logger"
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"

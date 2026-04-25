@@ -1,24 +1,24 @@
 #!/bin/sh
 ### BEGIN INIT INFO
-# Provides:          alertpriority-agent
+# Provides:          alertkick-agent
 # Required-Start:    $network
 # Required-Stop:     $network
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
 ### END INIT INFO
 
-NAME=alertpriority-agent
-DAEMON=/usr/bin/alertpriority-agent
-PIDFILE=/var/run/alertpriority-agent.pid
-LOG=/var/log/alertpriority-agent.log
+NAME=alertkick-agent
+DAEMON=/usr/bin/alertkick-agent
+PIDFILE=/var/run/alertkick-agent.pid
+LOG=/var/log/alertkick-agent.log
 export TMPDIR=/var/lib
 
-[ -r /etc/default/alertpriority-agent ] && . /etc/default/alertpriority-agent
+[ -r /etc/default/alertkick-agent ] && . /etc/default/alertkick-agent
 test -f $DAEMON || exit 0
 
 # If upstart is installed, use it instead
 if [ -x /lib/init/upstart-job ]; then
-        /lib/init/upstart-job alertpriority-agent $@
+        /lib/init/upstart-job alertkick-agent $@
         exit $?
 fi
 
@@ -53,7 +53,7 @@ status)
            fi
        fi
          ;;
-*)	log_action_msg "Usage: /etc/init.d/alertpriority-agent {start|stop|status|restart}"
+*)	log_action_msg "Usage: /etc/init.d/alertkick-agent {start|stop|status|restart}"
         exit 2
         ;;
 esac

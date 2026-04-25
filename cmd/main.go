@@ -10,18 +10,18 @@ import (
 	"path/filepath"
 	"strings"
 
-	"apagent/agent"
-	_ "apagent/checks/all"
-	"apagent/common"
-	"apagent/config"
-	"apagent/logger"
+	"akagent/agent"
+	_ "akagent/checks/all"
+	"akagent/common"
+	"akagent/config"
+	"akagent/logger"
 )
 
-var fConfigDir = flag.String("configdir", "/etc/alertpriority-agent", "path to config directory")
-var fConfigFile = flag.String("config", "/etc/alertpriority-agent/alertpriority-agent.conf", "path to config file")
+var fConfigDir = flag.String("configdir", "/etc/alertkick-agent", "path to config directory")
+var fConfigFile = flag.String("config", "/etc/alertkick-agent/alertkick-agent.conf", "path to config file")
 var fDebug = flag.Bool("debug", false, "Starts the agent and displays the metrics sent in the terminal")
 var fVersion = flag.Bool("version", false, "display the version")
-var fLogFile = flag.String("logfile", "/var/log/alertpriority-agent/apagent.log", "path to log file")
+var fLogFile = flag.String("logfile", "/var/log/alertkick-agent/apagent.log", "path to log file")
 var fSetup = flag.Bool("setup", false, "setup the agent")
 
 // Version - holds the version number
@@ -35,7 +35,7 @@ func main() {
 	config.ConfigFile = *fConfigFile
 
 	if *fVersion {
-		v := fmt.Sprintf("AlertPriority Monitoring Agent - Version %s", Version)
+		v := fmt.Sprintf("AlertKick Monitoring Agent - Version %s", Version)
 		fmt.Println(v)
 		return
 	}
@@ -84,7 +84,7 @@ func main() {
 	}
 
 	if len(config.AgentID) == 0 {
-		err := errors.New("missing AgentID. Please define `agent_id` in alertpriority-agent.conf")
+		err := errors.New("missing AgentID. Please define `agent_id` in alertkick-agent.conf")
 		log.Fatal().Err(err).Msg("Error creating agent")
 	}
 
@@ -97,7 +97,7 @@ func main() {
 	}()
 
 	log.Info().Msgf("Agent ID: %s", config.AgentID)
-	log.Info().Msg("Starting AlertPriority Agent (Version: " + Version + ")")
+	log.Info().Msg("Starting AlertKick Agent (Version: " + Version + ")")
 
 	// Run the agent until shutdown (blocking)
 	err = agent.Run(shutdown)
@@ -166,9 +166,9 @@ func Setup() {
 	endpoint := os.Getenv("AP_AGENT_ENDPOINT")
 	if endpoint == "" {
 		if agentEnv == "staging" {
-			endpoint = "monit-stg.alertpriority.com:8585"
+			endpoint = "monit-stg.alertkick.com:8585"
 		} else {
-			endpoint = "monit.alertpriority.com:8585"
+			endpoint = "monit.alertkick.com:8585"
 		}
 	}
 
@@ -190,7 +190,7 @@ func Setup() {
 		log.Panic().Msgf("Failed to verify agent token, status code: %d", resp.StatusCode)
 	}
 
-	// On successful return, create /etc/alertpriority-agent/alertpriority-agent.conf file
+	// On successful return, create /etc/alertkick-agent/alertkick-agent.conf file
 	confContent := fmt.Sprintf(`{
 		"AgentToken": "%s",
 		"AgentID": "%s",
@@ -199,12 +199,12 @@ func Setup() {
 	}`, agentToken, agentID, hostLabel, subdomain)
 
 	// create config directory if it doesn't exist
-	confDir := "/etc/alertpriority-agent"
+	confDir := "/etc/alertkick-agent"
 	if _, err := os.Stat(confDir); os.IsNotExist(err) {
 		os.MkdirAll(confDir, 0755)
 	}
 
-	confFilePath := filepath.Join(confDir, "alertpriority-agent.conf")
+	confFilePath := filepath.Join(confDir, "alertkick-agent.conf")
 	err = os.WriteFile(confFilePath, []byte(confContent), 0644)
 	if err != nil {
 		log.Panic().Err(err).Msgf("Failed to update %s", confFilePath)

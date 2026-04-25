@@ -2,7 +2,7 @@
 case "$1" in
     remove)
         # Stop the agent if we are removing
-        service alertpriority-agent stop || :
+        service alertkick-agent stop || :
         ;;
     upgrade)
         :

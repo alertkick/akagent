@@ -1,13 +1,13 @@
-# AlertPriority Agent
+# AlertKick Agent
 
-A lightweight, high-performance security monitoring agent for Linux systems using native eBPF technology. The AlertPriority Agent captures system events using eBPF probes and ships them to the AlertPriority platform for analysis.
+A lightweight, high-performance security monitoring agent for Linux systems using native eBPF technology. The AlertKick Agent captures system events using eBPF probes and ships them to the AlertKick platform for analysis.
 
 ## Architecture
 
 - **Agent**: Captures and enriches raw system events using native eBPF
 - **Backend**: Provides intelligence - compliance tagging, LLM analysis, alert rules
 
-The agent captures events and enriches them with process/container context. All compliance logic, alert rules, and threat analysis happen in the AlertPriority backend.
+The agent captures events and enriches them with process/container context. All compliance logic, alert rules, and threat analysis happen in the AlertKick backend.
 
 ## Features
 
@@ -19,7 +19,7 @@ The agent captures events and enriches them with process/container context. All 
 - **Kernel Events**: Module loading, kernel parameter changes
 - **Memory Events**: Executable memory regions (W+X)
 - **Event Enrichment**: Full process context, container detection, parent chain
-- **Secure Communication**: TLS-encrypted communication with AlertPriority platform
+- **Secure Communication**: TLS-encrypted communication with AlertKick platform
 - **Lightweight**: Minimal resource footprint with efficient eBPF-based collection
 
 ## Requirements
@@ -38,10 +38,10 @@ Download the latest release for your distribution:
 
 ```bash
 # Debian/Ubuntu
-sudo dpkg -i alertpriority-agent_*.deb
+sudo dpkg -i alertkick-agent_*.deb
 
 # RHEL/CentOS/Fedora
-sudo rpm -i alertpriority-agent-*.rpm
+sudo rpm -i alertkick-agent-*.rpm
 ```
 
 ### Building from Source
@@ -54,7 +54,7 @@ cd apagent
 # Build the agent (includes eBPF programs)
 make build
 
-# The binary will be available at build/alertpriority-agent
+# The binary will be available at build/alertkick-agent
 ```
 
 ### Running the Agent
@@ -62,26 +62,26 @@ make build
 1. **Create a configuration file:**
 
 ```bash
-sudo mkdir -p /etc/alertpriority-agent
-sudo cp alertpriority-agent.conf.example /etc/alertpriority-agent/alertpriority-agent.conf
+sudo mkdir -p /etc/alertkick-agent
+sudo cp alertkick-agent.conf.example /etc/alertkick-agent/alertkick-agent.conf
 # Edit the configuration with your agent credentials
-sudo nano /etc/alertpriority-agent/alertpriority-agent.conf
+sudo nano /etc/alertkick-agent/alertkick-agent.conf
 ```
 
 2. **Start the agent:**
 
 ```bash
 # Using systemd
-sudo systemctl enable alertpriority-agent
-sudo systemctl start alertpriority-agent
+sudo systemctl enable alertkick-agent
+sudo systemctl start alertkick-agent
 
 # Or run directly
-sudo /usr/bin/alertpriority-agent
+sudo /usr/bin/alertkick-agent
 ```
 
 ## Configuration
 
-The agent configuration file is located at `/etc/alertpriority-agent/alertpriority-agent.conf`. Example configuration:
+The agent configuration file is located at `/etc/alertkick-agent/alertkick-agent.conf`. Example configuration:
 
 ```json
 {
@@ -90,7 +90,7 @@ The agent configuration file is located at `/etc/alertpriority-agent/alertpriori
   "AgentID": "your-agent-id",
   "AgentName": "my-server",
   "Subdomain": "your-subdomain",
-  "Endpoint": "your-endpoint.alertpriority.com:8585",
+  "Endpoint": "your-endpoint.alertkick.com:8585",
   "TLSInsecure": false
 }
 ```
@@ -100,11 +100,11 @@ The agent configuration file is located at `/etc/alertpriority-agent/alertpriori
 | Option | Description | Default |
 |--------|-------------|---------|
 | `Debug` | Enable debug logging | `false` |
-| `AgentToken` | Authentication token from AlertPriority | Required |
+| `AgentToken` | Authentication token from AlertKick | Required |
 | `AgentID` | Unique identifier for this agent | Required |
 | `AgentName` | Human-readable name for this host | Optional |
-| `Subdomain` | Your AlertPriority subdomain | Required |
-| `Endpoint` | AlertPriority server endpoint | Provided during setup |
+| `Subdomain` | Your AlertKick subdomain | Required |
+| `Endpoint` | AlertKick server endpoint | Provided during setup |
 | `TLSInsecure` | Skip TLS certificate verification | `false` |
 | `TLSCAFilePath` | Path to additional CA certificate | Optional |
 
@@ -118,7 +118,7 @@ The agent can also be configured via environment variables during setup:
 | `AP_AGENT_TOKEN` | Agent authentication token |
 | `AP_AGENT_ID` | Unique agent identifier |
 | `AP_AGENT_HOST_LABEL` | Host label for display |
-| `AP_AGENT_SUBDOMAIN` | Your AlertPriority subdomain |
+| `AP_AGENT_SUBDOMAIN` | Your AlertKick subdomain |
 | `AP_AGENT_ENDPOINT` | Override default server endpoint |
 
 ## Building Packages
@@ -127,14 +127,14 @@ The agent can also be configured via environment variables during setup:
 
 ```bash
 make package
-# Output: build/alertpriority-agent-*.deb
+# Output: build/alertkick-agent-*.deb
 ```
 
 ### Build an RPM package (RHEL/CentOS/Fedora)
 
 ```bash
 make package
-# Output: build/alertpriority-agent-*.rpm
+# Output: build/alertkick-agent-*.rpm
 ```
 
 ## Development
@@ -221,13 +221,13 @@ Kernel (eBPF) → Agent (Enrichment) → Endpoint (Gateway) → Kafka → API (I
 ### Check Agent Status
 
 ```bash
-sudo systemctl status alertpriority-agent
+sudo systemctl status alertkick-agent
 ```
 
 ### View Logs
 
 ```bash
-sudo journalctl -u alertpriority-agent -f
+sudo journalctl -u alertkick-agent -f
 ```
 
 ### Debug Mode
@@ -235,14 +235,14 @@ sudo journalctl -u alertpriority-agent -f
 Run the agent with debug output:
 
 ```bash
-sudo /usr/bin/alertpriority-agent -debug
+sudo /usr/bin/alertkick-agent -debug
 ```
 
 ### Check eBPF Programs
 
 ```bash
 # List loaded BPF programs
-sudo bpftool prog list | grep alertpriority
+sudo bpftool prog list | grep alertkick
 
 # Check ring buffer
 sudo bpftool map list | grep events
@@ -250,8 +250,8 @@ sudo bpftool map list | grep events
 
 ## License
 
-This software is proprietary and requires a valid AlertPriority subscription. See [LICENSE.txt](LICENSE.txt) for the full license agreement. Third-party open-source components and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+This software is proprietary and requires a valid AlertKick subscription. See [LICENSE.txt](LICENSE.txt) for the full license agreement. Third-party open-source components and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Support
 
-For support and documentation, visit [https://alertpriority.com/docs](https://alertpriority.com/docs)
+For support and documentation, visit [https://alertkick.com/docs](https://alertkick.com/docs)

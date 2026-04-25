@@ -1,7 +1,7 @@
 package client
 
 import (
-	"apagent/config"
+	"akagent/config"
 	"sync"
 
 	"github.com/rs/zerolog"
@@ -9,7 +9,7 @@ import (
 
 // Pool manages multiple Connection instances so the agent can maintain
 // simultaneous links to several regional endpoints (e.g.
-// eu-endpoint.alertpriority.com and us-endpoint.alertpriority.com).
+// eu-endpoint.alertkick.com and us-endpoint.alertkick.com).
 //
 // Behaviour:
 //   - All connections heartbeat independently — each region knows the agent

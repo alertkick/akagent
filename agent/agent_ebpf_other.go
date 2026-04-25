@@ -3,7 +3,7 @@
 package agent
 
 import (
-	"apagent/client"
+	"akagent/client"
 	"context"
 )
 

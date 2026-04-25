@@ -1,12 +1,12 @@
-AlertPriority Agent - Proprietary Software License Agreement
+AlertKick Agent - Proprietary Software License Agreement
 
-Copyright (c) 2024-2026 AlertPriority. All rights reserved.
+Copyright (c) 2024-2026 AlertKick. All rights reserved.
 
-https://alertpriority.com
+https://alertkick.com
 
 IMPORTANT: READ THIS LICENSE AGREEMENT CAREFULLY BEFORE USING THIS SOFTWARE.
 
-By installing, copying, downloading, or otherwise using the AlertPriority Agent
+By installing, copying, downloading, or otherwise using the AlertKick Agent
 software ("Software"), you agree to be bound by the terms of this License
 Agreement ("Agreement"). If you do not agree to these terms, do not install or
 use the Software.
@@ -14,14 +14,14 @@ use the Software.
 1. GRANT OF LICENSE
 
    Subject to the terms of this Agreement and a valid, paid subscription to the
-   AlertPriority platform ("Subscription"), AlertPriority grants you a limited,
+   AlertKick platform ("Subscription"), AlertKick grants you a limited,
    non-exclusive, non-transferable, non-sublicensable, revocable license to
    install and use the Software solely in connection with your authorized use of
-   the AlertPriority platform at https://alertpriority.com.
+   the AlertKick platform at https://alertkick.com.
 
 2. SUBSCRIPTION REQUIREMENT
 
-   The Software requires an active, paid AlertPriority Subscription to operate.
+   The Software requires an active, paid AlertKick Subscription to operate.
    Your right to use the Software is contingent upon maintaining a valid
    Subscription in good standing. Upon expiration or termination of your
    Subscription, your license to use the Software immediately terminates, and
@@ -44,7 +44,7 @@ use the Software.
        on the Software;
 
    (e) Use the Software for any purpose other than in connection with an
-       authorized AlertPriority Subscription;
+       authorized AlertKick Subscription;
 
    (f) Use the Software to develop a competing product or service;
 
@@ -60,22 +60,22 @@ use the Software.
 4. INTELLECTUAL PROPERTY
 
    The Software, including all copies, modifications, and derivative works, is
-   and shall remain the sole and exclusive property of AlertPriority. This
+   and shall remain the sole and exclusive property of AlertKick. This
    Agreement does not convey to you any ownership interest in or to the
    Software, but only a limited right of use subject to the terms of this
-   Agreement. AlertPriority reserves all rights not expressly granted herein.
+   Agreement. AlertKick reserves all rights not expressly granted herein.
 
-   "AlertPriority," the AlertPriority logo, and all related product and service
+   "AlertKick," the AlertKick logo, and all related product and service
    names, marks, and logos are trademarks or registered trademarks of
-   AlertPriority. You may not use any such marks without the prior written
-   consent of AlertPriority.
+   AlertKick. You may not use any such marks without the prior written
+   consent of AlertKick.
 
 5. DATA COLLECTION
 
    The Software may collect and transmit system telemetry, security events, and
-   operational data to the AlertPriority platform as part of its intended
-   functionality. Such data collection is governed by the AlertPriority Privacy
-   Policy available at https://alertpriority.com/privacy.
+   operational data to the AlertKick platform as part of its intended
+   functionality. Such data collection is governed by the AlertKick Privacy
+   Policy available at https://alertkick.com/privacy.
 
 6. DISCLAIMER OF WARRANTIES
 
@@ -101,7 +101,7 @@ use the Software.
 
 8. TERMINATION
 
-   This Agreement is effective until terminated. AlertPriority may terminate
+   This Agreement is effective until terminated. AlertKick may terminate
    this Agreement immediately and without notice if you breach any term of this
    Agreement. Upon termination:
 
@@ -114,19 +114,19 @@ use the Software.
 9. GOVERNING LAW
 
    This Agreement shall be governed by and construed in accordance with the
-   laws of the jurisdiction in which AlertPriority is incorporated, without
+   laws of the jurisdiction in which AlertKick is incorporated, without
    regard to its conflict of laws principles.
 
 10. GENERAL
 
-    This Agreement constitutes the entire agreement between you and AlertPriority
+    This Agreement constitutes the entire agreement between you and AlertKick
     regarding the Software and supersedes all prior agreements and
     understandings, whether written or oral. If any provision of this Agreement
     is held to be unenforceable, the remaining provisions shall continue in full
-    force and effect. AlertPriority's failure to enforce any right or provision
+    force and effect. AlertKick's failure to enforce any right or provision
     of this Agreement shall not constitute a waiver of such right or provision.
 
-    AlertPriority reserves the right to modify this Agreement at any time.
+    AlertKick reserves the right to modify this Agreement at any time.
     Continued use of the Software after such modifications constitutes your
     acceptance of the revised Agreement.
 
@@ -141,6 +141,6 @@ use the Software.
 12. CONTACT
 
     For questions about this Agreement, please contact:
-    AlertPriority
-    Email: support@alertpriority.com
-    Web: https://alertpriority.com
+    AlertKick
+    Email: support@alertkick.com
+    Web: https://alertkick.com

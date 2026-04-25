@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 2.8.12)
 
-project(alertpriority-agent NONE)
+project(alertkick-agent NONE)
 
 message("CMAKE_GENERATOR: ${CMAKE_GENERATOR}")
 
-set(APP_NAME    "alertpriority-agent")
-set(APP_VENDOR  "AlertPriority")
+set(APP_NAME    "alertkick-agent")
+set(APP_VENDOR  "AlertKick")
 set(APP_CREATOR "${APP_VENDOR}")
 set(APP_SUMMARY "${APP_CREATOR} Agent")
-set(APP_CONTACT "agent-pkg@alertpriority.com")
+set(APP_CONTACT "agent-pkg@alertkick.com")
 set(APP_DESCRIPTION ${APP_SUMMARY})
 
 if (DEFINED ENV{FORCE_REPO_NAME})
@@ -53,8 +53,8 @@ set(GENERATED_PACKAGE_SCRIPTS "${CMAKE_BINARY_DIR}/package")
 set(REPOSITORY_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/repo")
 set(GENERATED_REPOSITORY_SCRIPTS "${CMAKE_BINARY_DIR}/repo")
 
-set(REPO_RPM_NAME "alertpriority")
-set(REPO_UPLOAD_CLOUD "alertpriority")
+set(REPO_RPM_NAME "alertkick")
+set(REPO_UPLOAD_CLOUD "alertkick")
 set(SIGNATURE_KEY "~/server.key")
 
 if (${SPECIFIC_SYSTEM_VERSION_NAME} MATCHES "^Linux")
@@ -93,9 +93,9 @@ if (${SPECIFIC_SYSTEM_VERSION_NAME} MATCHES "^Linux")
     set(CPACK_RPM_PRE_UNINSTALL_SCRIPT_FILE ${RPM_PREUN})
 
     ### RPM Prelink Disable
-    set(RPM_PRELINK ${GENERATED_PACKAGE_SCRIPTS}/rpm/alertpriority-agent-prelink.conf)
+    set(RPM_PRELINK ${GENERATED_PACKAGE_SCRIPTS}/rpm/alertkick-agent-prelink.conf)
     message("Generating script ${RPM_PRELINK}")
-    configure_file(${PACKAGE_SCRIPTS}/rpm/alertpriority-agent-prelink.conf.in ${RPM_PRELINK})
+    configure_file(${PACKAGE_SCRIPTS}/rpm/alertkick-agent-prelink.conf.in ${RPM_PRELINK})
     install(FILES ${RPM_PRELINK} DESTINATION /etc/prelink.conf.d)
 
     ### Install Empty Config File and /etc/${APP_NAME} dir

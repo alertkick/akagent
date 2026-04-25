@@ -1,5 +1,4 @@
-module apagent
-
+module akagent
 go 1.21.3
 
 require (

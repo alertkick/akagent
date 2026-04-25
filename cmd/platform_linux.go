@@ -3,7 +3,7 @@
 package main
 
 import (
-	"apagent/common"
+	"akagent/common"
 
 	"github.com/rs/zerolog"
 	"golang.org/x/mod/semver"

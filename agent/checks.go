@@ -1,9 +1,9 @@
 package agent
 
 import (
-	"apagent/client"
-	"apagent/internal/api"
-	"apagent/logger"
+	"akagent/client"
+	"akagent/internal/api"
+	"akagent/logger"
 	"sync"
 	"time"
 )

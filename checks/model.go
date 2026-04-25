@@ -1,7 +1,7 @@
 package checks
 
 import (
-	"apagent/config"
+	"akagent/config"
 	"encoding/json"
 )
 

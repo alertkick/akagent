@@ -1,11 +1,11 @@
 package agent
 
 import (
-	"apagent/checker"
-	"apagent/checks"
-	"apagent/client"
-	"apagent/config"
-	"apagent/internal/api"
+	"akagent/checker"
+	"akagent/checks"
+	"akagent/client"
+	"akagent/config"
+	"akagent/internal/api"
 	"context"
 	"encoding/json"
 	"errors"

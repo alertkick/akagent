@@ -3,7 +3,7 @@
 package agent
 
 import (
-	"apagent/client"
+	"akagent/client"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	updaterScriptPath = "/usr/local/bin/alertpriority-agent-updater.sh"
-	downloadDir       = "/var/lib/alertpriority-agent/updates"
+	updaterScriptPath = "/usr/local/bin/alertkick-agent-updater.sh"
+	downloadDir       = "/var/lib/alertkick-agent/updates"
 )
 
 // updateAgentParams mirrors the command params sent from the API
@@ -62,7 +62,7 @@ func (a *agent) handleUpdateAgentRequest(req client.Request) {
 	// Download the package
 	a.sendUpdateProgress(req, "downloading", "Downloading agent package...", 30, "in_progress")
 
-	packageFilename := fmt.Sprintf("alertpriority-agent-%s.deb", params.TargetVersion)
+	packageFilename := fmt.Sprintf("alertkick-agent-%s.deb", params.TargetVersion)
 	packagePath := filepath.Join(downloadDir, packageFilename)
 
 	if err := a.downloadPackage(params.DownloadURL, packagePath); err != nil {

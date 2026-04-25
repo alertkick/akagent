@@ -180,7 +180,7 @@ var criticalProcesses = map[string]struct{}{
 	// System services
 	"systemd": {}, "init": {}, "dbus-daemon": {},
 	// Monitoring
-	"alertpriority": {}, "ap-agent": {}, "prometheus": {}, "grafana": {},
+	"alertkick": {}, "ap-agent": {}, "prometheus": {}, "grafana": {},
 	"newrelic": {},
 	// Databases (killing these is serious)
 	"mysqld": {}, "postgres": {}, "mongod": {}, "redis-server": {},

@@ -1,7 +1,7 @@
 package compliance
 
 import (
-	"apagent/ebpf/rules"
+	"akagent/ebpf/rules"
 	"encoding/json"
 	"sync"
 )

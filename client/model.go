@@ -1,7 +1,7 @@
 package client
 
 import (
-	"apagent/internal/api"
+	"akagent/internal/api"
 	"encoding/json"
 	"time"
 
@@ -196,7 +196,7 @@ func (n NativeAgentConfigResponse) String() string {
 	return string(s)
 }
 
-// NativeAgentConfig represents the configuration pushed from apweb to the native agent
+// NativeAgentConfig represents the configuration pushed from alertkick-ui to the native agent
 type NativeAgentConfig struct {
 	// Enabled indicates if the agent should be active
 	Enabled bool `json:"enabled" yaml:"enabled"`
@@ -239,7 +239,7 @@ type NativeAgentConfig struct {
 	ComplianceProfiles []string `json:"compliance_profiles,omitempty" yaml:"compliance_profiles,omitempty"` // ["pci-dss-4.0", "sox"]
 }
 
-// NativeAgentAlertRule represents an alert rule configuration from apweb
+// NativeAgentAlertRule represents an alert rule configuration from alertkick-ui
 type NativeAgentAlertRule struct {
 	Name        string                   `json:"name" yaml:"name"`
 	Description string                   `json:"description,omitempty" yaml:"description,omitempty"`
@@ -270,7 +270,7 @@ type NativeConfigGetStoredResult struct {
 	Found     bool               `json:"found"`
 }
 
-// NativeAgentStatusPost represents the native agent status sent to apweb
+// NativeAgentStatusPost represents the native agent status sent to alertkick-ui
 type NativeAgentStatusPost struct {
 	ID        string          `json:"id"`
 	Version   string          `json:"v"`

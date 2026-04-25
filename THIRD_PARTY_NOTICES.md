@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-The AlertPriority Agent includes the following third-party open-source
+The AlertKick Agent includes the following third-party open-source
 components. Each component is licensed under its own respective license as
 listed below.
 

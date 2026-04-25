@@ -1,14 +1,14 @@
 # Change these variables as necessary.
 MAIN_PACKAGE_PATH := ./cmd
-BINARY_NAME := alertpriority-agent
-TARGET=build/alertpriority-agent
+BINARY_NAME := alertkick-agent
+TARGET=build/alertkick-agent
 
 all: $(TARGET)
 
 $(TARGET):
 	cmake -H. -Bbuild
 	cmake --build build
-	build/alertpriority-agent -v
+	build/alertkick-agent -v
 
 # ==================================================================================== #
 # HELPERS

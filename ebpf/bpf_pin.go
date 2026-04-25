@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	// BPFPinBasePath is the base path for pinning AlertPriority BPF objects
-	BPFPinBasePath = "/sys/fs/bpf/alertpriority"
+	// BPFPinBasePath is the base path for pinning AlertKick BPF objects
+	BPFPinBasePath = "/sys/fs/bpf/alertkick"
 
 	// Subdirectories for organizing pinned objects
 	BPFPinProgsPath = BPFPinBasePath + "/progs"

@@ -1,9 +1,9 @@
 package client
 
 import (
-	"apagent/certs"
-	"apagent/config"
-	"apagent/logger"
+	"akagent/certs"
+	"akagent/config"
+	"akagent/logger"
 	"bufio"
 	"context"
 	"crypto/tls"

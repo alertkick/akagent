@@ -1,4 +1,4 @@
-/var/log/alertpriority-agent.log {
+/var/log/alertkick-agent.log {
     missingok
     rotate 12
     size 10M
@@ -7,6 +7,6 @@
     notifempty
     create 640 root adm
     postrotate
-      kill -HUP `cat /var/run/alertpriority-agent.pid`
+      kill -HUP `cat /var/run/alertkick-agent.pid`
     endscript
 }

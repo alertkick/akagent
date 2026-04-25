@@ -5,8 +5,8 @@ package ebpf
 import (
 	"fmt"
 
-	"apagent/ebpf/bpfgen"
-	"apagent/logger"
+	"akagent/ebpf/bpfgen"
+	"akagent/logger"
 )
 
 // loadAllPrograms loads all BPF program objects

@@ -1,8 +1,8 @@
 package config
 
 import (
-	"apagent/internal/api"
-	"apagent/logger"
+	"akagent/internal/api"
+	"akagent/logger"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -89,7 +89,7 @@ var (
 		Debug:                   false,
 		ProcFS:                  "/proc",
 		KernelVersion:           "",
-		HubbleLib:               "/var/lib/alertpriority-agent/",
+		HubbleLib:               "/var/lib/alertkick-agent/",
 		BTF:                     "",
 		Verbosity:               3,
 		ForceSmallProgs:         false,

@@ -1,14 +1,14 @@
 #!/bin/sh
 #
 # chkconfig: 345 85 15     - start or stop process definition within the boot process
-# description: AlertPriority monitoring agent
-# processname: alertpriority-agent
-# pidfile: /var/run/alertpriority-agent.pid
+# description: AlertKick monitoring agent
+# processname: alertkick-agent
+# pidfile: /var/run/alertkick-agent.pid
 
-NAME=alertpriority-agent
-DAEMON=/usr/bin/alertpriority-agent
-PIDFILE=/var/run/alertpriority-agent.pid
-LOG=/var/log/alertpriority-agent.log
+NAME=alertkick-agent
+DAEMON=/usr/bin/alertkick-agent
+PIDFILE=/var/run/alertkick-agent.pid
+LOG=/var/log/alertkick-agent.log
 export TMPDIR=/var/lib
 
 # Source function library.      This creates the operating environment for the process to be started

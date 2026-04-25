@@ -3,6 +3,6 @@
 package all
 
 import (
-	_ "apagent/checks/cpu"
-	_ "apagent/checks/http"
+	_ "akagent/checks/cpu"
+	_ "akagent/checks/http"
 )

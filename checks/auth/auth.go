@@ -3,10 +3,10 @@
 package auth
 
 import (
-	"apagent/checks"
-	"apagent/ebpf"
-	"apagent/internal/api"
-	"apagent/logger"
+	"akagent/checks"
+	"akagent/ebpf"
+	"akagent/internal/api"
+	"akagent/logger"
 	"bufio"
 	"context"
 	"encoding/json"

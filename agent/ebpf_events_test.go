@@ -3,7 +3,7 @@
 package agent
 
 import (
-	"apagent/ebpf"
+	"akagent/ebpf"
 	"encoding/json"
 	"os"
 	"testing"

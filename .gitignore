@@ -13,7 +13,7 @@ third_party_licenses/
 
 # Compiled binaries
 main
-alertpriority-agent
+alertkick-agent
 
 # Demo/test data
 demo-security-events/
@@ -37,7 +37,7 @@ vendor/
 
 # Configuration files with credentials
 *.conf
-alertpriority-agent.conf
+alertkick-agent.conf
 alertkick-agent.conf
 
 # Runtime generated files

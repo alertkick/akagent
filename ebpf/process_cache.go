@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"apagent/ebpf/bpfgen"
-	"apagent/logger"
+	"akagent/ebpf/bpfgen"
+	"akagent/logger"
 
 	"github.com/cilium/ebpf"
 )

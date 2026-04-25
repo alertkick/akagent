@@ -88,7 +88,7 @@ ls -lh dist/
             }
             environment {
                 TAG_VERSION = "${env.TAG_NAME?.replaceFirst('^v', '') ?: 'snapshot'}"
-                S3_BUCKET = 'alertpriority-agent-packages'
+                S3_BUCKET = 'alertkick-agent-packages'
                 SUPERADMIN_URL = 'http://superadmin.ssidhu.io:3002'
             }
             steps {

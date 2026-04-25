@@ -3,9 +3,9 @@
 package memory
 
 import (
-	"apagent/checks"
-	"apagent/internal/api"
-	"apagent/logger"
+	"akagent/checks"
+	"akagent/internal/api"
+	"akagent/logger"
 	"bufio"
 	"context"
 	"os"

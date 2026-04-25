@@ -1,9 +1,9 @@
 package checker
 
 import (
-	"apagent/config"
-	"apagent/internal/api"
-	"apagent/logger"
+	"akagent/config"
+	"akagent/internal/api"
+	"akagent/logger"
 	"context"
 	"fmt"
 	"path/filepath"

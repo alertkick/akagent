@@ -10,9 +10,9 @@ import (
 
 const (
 	// DefaultConfigPath is the default location for the native agent config
-	DefaultConfigPath = "/etc/alertpriority-agent/native.yaml"
+	DefaultConfigPath = "/etc/alertkick-agent/native.yaml"
 	// DefaultConfigDir is the default directory for config files
-	DefaultConfigDir = "/etc/alertpriority-agent"
+	DefaultConfigDir = "/etc/alertkick-agent"
 )
 
 // NativeConfig holds configuration options for the native eBPF agent
@@ -393,7 +393,7 @@ func SaveConfigToFile(config NativeConfig, path string) error {
 	}
 
 	// Add header comment
-	header := []byte("# Native eBPF Agent Configuration\n# Managed by AlertPriority Agent\n# Manual changes may be overwritten by endpoint sync\n\n")
+	header := []byte("# Native eBPF Agent Configuration\n# Managed by AlertKick Agent\n# Manual changes may be overwritten by endpoint sync\n\n")
 	data = append(header, data...)
 
 	if err := os.WriteFile(path, data, 0644); err != nil {

@@ -1,6 +1,6 @@
-# Contributing to AlertPriority Agent
+# Contributing to AlertKick Agent
 
-Thank you for your interest in contributing to the AlertPriority Agent! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to the AlertKick Agent! This document provides guidelines and information for contributors.
 
 ## Code of Conduct
 

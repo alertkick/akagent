@@ -1,9 +1,9 @@
 package checks
 
 import (
-	"apagent/config"
-	"apagent/internal/api"
-	"apagent/logger"
+	"akagent/config"
+	"akagent/internal/api"
+	"akagent/logger"
 	"context"
 	"os"
 	"os/exec"

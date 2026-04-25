@@ -4,7 +4,7 @@
   "AgentID": "YOUR_AGENT_ID_HERE",
   "AgentName": "my-server",
   "Subdomain": "YOUR_SUBDOMAIN_HERE",
-  "Endpoint": "monit.alertpriority.com:8484",
+  "Endpoint": "monit.alertkick.com:8484",
   "FalcoEnabled": false,
   "TLSInsecure": false,
   "TLSCAFilePath": ""

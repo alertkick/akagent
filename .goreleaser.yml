@@ -1,6 +1,6 @@
 version: 2
 
-project_name: alertpriority-agent
+project_name: alertkick-agent
 
 before:
   hooks:
@@ -10,7 +10,7 @@ before:
 builds:
   - id: linux
     main: ./cmd
-    binary: alertpriority-agent
+    binary: alertkick-agent
     env:
       - CGO_ENABLED=0
     goos:
@@ -25,7 +25,7 @@ builds:
 
   - id: windows
     main: ./cmd
-    binary: alertpriority-agent
+    binary: alertkick-agent
     env:
       - CGO_ENABLED=0
     goos:
@@ -56,37 +56,37 @@ nfpms:
   - id: deb
     builds:
       - linux
-    package_name: alertpriority-agent
-    vendor: AlertPriority
-    homepage: https://alertpriority.com
-    maintainer: AlertPriority <support@alertpriority.com>
-    description: AlertPriority monitoring and security agent
+    package_name: alertkick-agent
+    vendor: AlertKick
+    homepage: https://alertkick.com
+    maintainer: AlertKick <support@alertkick.com>
+    description: AlertKick monitoring and security agent
     license: Proprietary
     formats:
       - deb
     bindir: /usr/bin
     contents:
-      - src: packaging/linux/systemd/alertpriority-agent.service
-        dst: /lib/systemd/system/alertpriority-agent.service
-      - src: packaging/linux/sysv-debian/alertpriority-agent
-        dst: /etc/init.d/alertpriority-agent
+      - src: packaging/linux/systemd/alertkick-agent.service
+        dst: /lib/systemd/system/alertkick-agent.service
+      - src: packaging/linux/sysv-debian/alertkick-agent
+        dst: /etc/init.d/alertkick-agent
         file_info:
           mode: 0755
-      - src: packaging/linux/logrotate/alertpriority-agent
-        dst: /etc/logrotate.d/alertpriority-agent
-      - src: packaging/linux/conf/alertpriority-agent.conf
-        dst: /etc/alertpriority-agent/alertpriority-agent.conf
+      - src: packaging/linux/logrotate/alertkick-agent
+        dst: /etc/logrotate.d/alertkick-agent
+      - src: packaging/linux/conf/alertkick-agent.conf
+        dst: /etc/alertkick-agent/alertkick-agent.conf
         type: config|noreplace
-      - dst: /var/lib/alertpriority-agent
+      - dst: /var/lib/alertkick-agent
         type: dir
-      - dst: /etc/alertpriority-agent
+      - dst: /etc/alertkick-agent
         type: dir
-      - dst: /usr/lib/alertpriority-agent/plugins
+      - dst: /usr/lib/alertkick-agent/plugins
         type: dir
       - src: LICENSE.txt
-        dst: /usr/share/doc/alertpriority-agent/LICENSE.txt
+        dst: /usr/share/doc/alertkick-agent/LICENSE.txt
       - src: THIRD_PARTY_NOTICES.md
-        dst: /usr/share/doc/alertpriority-agent/THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/alertkick-agent/THIRD_PARTY_NOTICES.md
     scripts:
       postinstall: packaging/scripts/deb-postinst.sh
       preremove: packaging/scripts/deb-prerm.sh
@@ -95,37 +95,37 @@ nfpms:
   - id: rpm
     builds:
       - linux
-    package_name: alertpriority-agent
-    vendor: AlertPriority
-    homepage: https://alertpriority.com
-    maintainer: AlertPriority <support@alertpriority.com>
-    description: AlertPriority monitoring and security agent
+    package_name: alertkick-agent
+    vendor: AlertKick
+    homepage: https://alertkick.com
+    maintainer: AlertKick <support@alertkick.com>
+    description: AlertKick monitoring and security agent
     license: Proprietary
     formats:
       - rpm
     bindir: /usr/bin
     contents:
-      - src: packaging/linux/systemd/alertpriority-agent.service
-        dst: /lib/systemd/system/alertpriority-agent.service
-      - src: packaging/linux/sysv-redhat/alertpriority-agent
-        dst: /etc/init.d/alertpriority-agent
+      - src: packaging/linux/systemd/alertkick-agent.service
+        dst: /lib/systemd/system/alertkick-agent.service
+      - src: packaging/linux/sysv-redhat/alertkick-agent
+        dst: /etc/init.d/alertkick-agent
         file_info:
           mode: 0755
-      - src: packaging/linux/logrotate/alertpriority-agent
-        dst: /etc/logrotate.d/alertpriority-agent
-      - src: packaging/linux/conf/alertpriority-agent.conf
-        dst: /etc/alertpriority-agent/alertpriority-agent.conf
+      - src: packaging/linux/logrotate/alertkick-agent
+        dst: /etc/logrotate.d/alertkick-agent
+      - src: packaging/linux/conf/alertkick-agent.conf
+        dst: /etc/alertkick-agent/alertkick-agent.conf
         type: config|noreplace
-      - dst: /var/lib/alertpriority-agent
+      - dst: /var/lib/alertkick-agent
         type: dir
-      - dst: /etc/alertpriority-agent
+      - dst: /etc/alertkick-agent
         type: dir
-      - dst: /usr/lib/alertpriority-agent/plugins
+      - dst: /usr/lib/alertkick-agent/plugins
         type: dir
       - src: LICENSE.txt
-        dst: /usr/share/doc/alertpriority-agent/LICENSE.txt
+        dst: /usr/share/doc/alertkick-agent/LICENSE.txt
       - src: THIRD_PARTY_NOTICES.md
-        dst: /usr/share/doc/alertpriority-agent/THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/alertkick-agent/THIRD_PARTY_NOTICES.md
     scripts:
       postinstall: packaging/scripts/rpm-postinst.sh
       preremove: packaging/scripts/rpm-preun.sh

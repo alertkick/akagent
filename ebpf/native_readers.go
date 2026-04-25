@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"apagent/logger"
+	"akagent/logger"
 )
 
 // StartEventListener starts reading events from all ring buffers

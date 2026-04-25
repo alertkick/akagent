@@ -3,8 +3,8 @@
 package agent
 
 import (
-	"apagent/client"
-	"apagent/ebpf"
+	"akagent/client"
+	"akagent/ebpf"
 	"context"
 	"sync"
 )

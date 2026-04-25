@@ -3,9 +3,9 @@
 package docker
 
 import (
-	"apagent/checks"
-	"apagent/internal/api"
-	"apagent/logger"
+	"akagent/checks"
+	"akagent/internal/api"
+	"akagent/logger"
 	"context"
 	"encoding/json"
 	"fmt"
