@@ -118,13 +118,35 @@ ls -lh dist/
                         docker exec ${UPLOADER} mkdir -p /dist
                         docker cp dist/. ${UPLOADER}:/dist/
 
+                        # upload_one wraps `aws s3 cp` and lazily provisions the bucket on
+                        # NoSuchBucket — the slow setup-infra call is skipped on the happy
+                        # path. Subsequent files in the loop hit the warm bucket directly.
+                        upload_one() {
+                            DST="s3://${S3_BUCKET}/packages/v${TAG_VERSION}/$1"
+                            ERR=$(docker exec ${UPLOADER} aws s3 cp "/dist/$1" "$DST" 2>&1) && return 0
+                            echo "$ERR"
+                            case "$ERR" in
+                                *NoSuchBucket*)
+                                    echo "  bucket missing — bootstrapping packages.alertkick.com infra…"
+                                    SETUP_RESP=$(curl --fail-with-body -sS --max-time 60 -X POST "${SUPERADMIN_URL}/fleet-api/agent-packages/setup-infra")
+                                    echo "$SETUP_RESP"
+                                    case "$SETUP_RESP" in
+                                        *'"bucket_ready":true'*) ;;
+                                        *) echo "ERROR: bucket still not ready after setup-infra"; return 1 ;;
+                                    esac
+                                    docker exec ${UPLOADER} aws s3 cp "/dist/$1" "$DST"
+                                    ;;
+                                *) return 1 ;;
+                            esac
+                        }
+
                         echo "=== Uploading packages to S3 ==="
                         # Bucket policy grants public read on packages/*, so no per-object ACL.
                         for f in dist/*.deb dist/*.rpm dist/*.tar.gz dist/*.zip dist/*.checksum; do
                             [ -f "$f" ] || continue
                             BASENAME=$(basename "$f")
                             echo "  uploading $BASENAME → s3://${S3_BUCKET}/packages/v${TAG_VERSION}/"
-                            docker exec ${UPLOADER} aws s3 cp "/dist/${BASENAME}" "s3://${S3_BUCKET}/packages/v${TAG_VERSION}/${BASENAME}"
+                            upload_one "$BASENAME"
                         done
 
                         echo "=== Registering with superadmin ==="
