@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     environment {
-        BUILD_IMAGE = 'apagent-build'
-        BUILD_CONTAINER = 'apagent-builder'
+        BUILD_IMAGE = 'akagent-build'
+        BUILD_CONTAINER = 'akagent-builder'
     }
 
     options {
