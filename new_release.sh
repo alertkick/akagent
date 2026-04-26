@@ -46,27 +46,46 @@ A=$(echo $version_num | cut -d '.' -f1)
 B=$(echo $version_num | cut -d '.' -f2)
 C=$(echo $version_num | cut -d '.' -f3)
 
-if [ $C -gt 8 ]; then
-    if [ $B -gt 8 ]; then
-        A=$((A+1))
-        B=0
-        C=0
+# Compute candidate patch (with rollover at .9) and minor versions.
+patch_A=$A; patch_B=$B; patch_C=$C
+if [ $patch_C -gt 8 ]; then
+    if [ $patch_B -gt 8 ]; then
+        patch_A=$((patch_A+1)); patch_B=0; patch_C=0
     else
-        B=$((B+1))
-        C=0
+        patch_B=$((patch_B+1)); patch_C=0
     fi
 else
-    C=$((C+1))
+    patch_C=$((patch_C+1))
 fi
+patchVersion="v$patch_A.$patch_B.$patch_C"
 
-nextVersion="v$A.$B.$C"
+minor_A=$A; minor_B=$((B+1)); minor_C=0
+if [ $minor_B -gt 9 ]; then
+    minor_A=$((minor_A+1)); minor_B=0
+fi
+minorVersion="v$minor_A.$minor_B.$minor_C"
 
 # Show what will be released
 echo ""
 echo "Commits to be released (develop → main):"
 git log --oneline origin/main..develop | head -20
 echo ""
-echo "New version will be: ${nextVersion}"
+echo "Candidates:"
+echo "  patch  → ${patchVersion}  (default — backwards-compatible)"
+echo "  minor  → ${minorVersion}  (pick this if this release contains breaking changes)"
+echo ""
+
+read -p "Are there any breaking changes in this release? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    nextVersion=$minorVersion
+    relType="minor (breaking)"
+else
+    nextVersion=$patchVersion
+    relType="patch"
+fi
+
+echo "New version will be: ${nextVersion} (${relType})"
 echo ""
 
 read -p "Create PR to merge develop → main and tag ${nextVersion}? (y/N): " -n 1 -r
