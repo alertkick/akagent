@@ -171,7 +171,7 @@ func (c *Connection) StartConnection() {
 	}
 
 	config := &tls.Config{
-		InsecureSkipVerify: c.TLSInsecure, // Change this to 'false' for production use
+		InsecureSkipVerify: c.TLSInsecure,
 		RootCAs:            caCertPool,
 		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 			c.log.Info().Int("numCerts", len(rawCerts)).Msg("Received server certificates")

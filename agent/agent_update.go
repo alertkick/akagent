@@ -10,13 +10,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"syscall"
 	"time"
 )
+
+// targetVersionRE restricts TargetVersion to a safe filename charset so the
+// server-supplied value can be interpolated into a path. Anything with `/`,
+// `\`, `..`, or other shell-meaningful characters is rejected.
+var targetVersionRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 const (
 	updaterScriptPath = "/usr/local/bin/alertkick-agent-updater.sh"
@@ -49,6 +56,27 @@ func (a *agent) handleUpdateAgentRequest(req client.Request) {
 		Str("download_url", params.DownloadURL).
 		Msg("agent.handleUpdateAgentRequest - starting update")
 
+	// Reject server-supplied values that would let a compromised/misconfigured
+	// endpoint write outside the download directory or fetch over plain HTTP.
+	if !targetVersionRE.MatchString(params.TargetVersion) {
+		msg := "Invalid target_version: must match " + targetVersionRE.String()
+		a.log.Error().Str("target_version", params.TargetVersion).Msg("agent.handleUpdateAgentRequest - " + msg)
+		a.sendUpdateProgress(req, "failed", msg, 0, "failed")
+		return
+	}
+	if u, err := url.Parse(params.DownloadURL); err != nil || u.Scheme != "https" || u.Host == "" {
+		msg := "Invalid download_url: must be an https:// URL"
+		a.log.Error().Str("download_url", params.DownloadURL).Msg("agent.handleUpdateAgentRequest - " + msg)
+		a.sendUpdateProgress(req, "failed", msg, 0, "failed")
+		return
+	}
+	if params.Checksum == "" {
+		msg := "Missing checksum: package updates require a sha256 checksum"
+		a.log.Error().Msg("agent.handleUpdateAgentRequest - " + msg)
+		a.sendUpdateProgress(req, "failed", msg, 0, "failed")
+		return
+	}
+
 	// Send pending progress
 	a.sendUpdateProgress(req, "pending", "Update command received, preparing to download", 10, "in_progress")
 
@@ -74,33 +102,31 @@ func (a *agent) handleUpdateAgentRequest(req client.Request) {
 
 	a.log.Info().Str("path", packagePath).Msg("agent.handleUpdateAgentRequest - package downloaded")
 
-	// Verify checksum if provided
-	if params.Checksum != "" {
-		a.sendUpdateProgress(req, "downloading", "Verifying package checksum...", 45, "in_progress")
+	// Verify checksum (mandatory — enforced at request entry).
+	a.sendUpdateProgress(req, "downloading", "Verifying package checksum...", 45, "in_progress")
 
-		actualChecksum, err := computeFileChecksum(packagePath)
-		if err != nil {
-			a.log.Err(err).Msg("agent.handleUpdateAgentRequest - failed to compute checksum")
-			a.sendUpdateProgress(req, "failed", "Failed to verify package checksum: "+err.Error(), 0, "failed")
-			os.Remove(packagePath)
-			return
-		}
-
-		expectedChecksum := params.Checksum
-		if _, after, ok := strings.Cut(expectedChecksum, ":"); ok {
-			expectedChecksum = after
-		}
-
-		if actualChecksum != expectedChecksum {
-			msg := fmt.Sprintf("Checksum mismatch: expected %s, got %s", params.Checksum, actualChecksum)
-			a.log.Error().Msg("agent.handleUpdateAgentRequest - " + msg)
-			a.sendUpdateProgress(req, "failed", msg, 0, "failed")
-			os.Remove(packagePath)
-			return
-		}
-
-		a.log.Info().Msg("agent.handleUpdateAgentRequest - checksum verified")
+	actualChecksum, err := computeFileChecksum(packagePath)
+	if err != nil {
+		a.log.Err(err).Msg("agent.handleUpdateAgentRequest - failed to compute checksum")
+		a.sendUpdateProgress(req, "failed", "Failed to verify package checksum: "+err.Error(), 0, "failed")
+		os.Remove(packagePath)
+		return
 	}
+
+	expectedChecksum := params.Checksum
+	if _, after, ok := strings.Cut(expectedChecksum, ":"); ok {
+		expectedChecksum = after
+	}
+
+	if actualChecksum != expectedChecksum {
+		msg := fmt.Sprintf("Checksum mismatch: expected %s, got %s", params.Checksum, actualChecksum)
+		a.log.Error().Msg("agent.handleUpdateAgentRequest - " + msg)
+		a.sendUpdateProgress(req, "failed", msg, 0, "failed")
+		os.Remove(packagePath)
+		return
+	}
+
+	a.log.Info().Msg("agent.handleUpdateAgentRequest - checksum verified")
 
 	// Send installing progress
 	a.sendUpdateProgress(req, "installing", "Installing agent package...", 60, "in_progress")
@@ -164,11 +190,14 @@ func (a *agent) sendUpdateProgress(req client.Request, stage, message string, pe
 	time.Sleep(100 * time.Millisecond)
 }
 
-// downloadPackage downloads a file from the given URL to destPath
+// downloadPackage downloads a file from the given URL to destPath.
+// A whole-request timeout caps how long a hostile or slow endpoint can stall
+// the agent — 10 min is generous for the small (~tens of MB) agent packages.
 func (a *agent) downloadPackage(url, destPath string) error {
 	a.log.Info().Str("url", url).Str("dest", destPath).Msg("agent.downloadPackage - starting download")
 
-	resp, err := http.Get(url)
+	client := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}

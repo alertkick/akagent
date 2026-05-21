@@ -157,8 +157,6 @@ func Setup() {
 		subdomain = GetUserInput("AP_AGENT_SUBDOMAIN variables not set. Please provide subdomain")
 	}
 
-	// Use the environment variables
-	log.Info().Msgf("Agent Token: %s", agentToken)
 	log.Info().Msgf("Agent ID: %s", agentID)
 	log.Info().Msgf("Host Label: %s", hostLabel)
 	log.Info().Msgf("Subdomain: %s", subdomain)
@@ -172,8 +170,8 @@ func Setup() {
 		}
 	}
 
-	// Verify the agent token by connecting to the endpoint
-	req, err := http.NewRequest("GET", "http://"+endpoint, nil)
+	// Verify the agent token by connecting to the endpoint over TLS.
+	req, err := http.NewRequest("GET", "https://"+endpoint, nil)
 	if err != nil {
 		log.Panic().Err(err).Msg("Failed to create request")
 	}
@@ -205,9 +203,15 @@ func Setup() {
 	}
 
 	confFilePath := filepath.Join(confDir, "alertkick-agent.conf")
-	err = os.WriteFile(confFilePath, []byte(confContent), 0644)
+	// 0600 — only the agent's user can read the file (it contains AgentToken).
+	err = os.WriteFile(confFilePath, []byte(confContent), 0600)
 	if err != nil {
 		log.Panic().Err(err).Msgf("Failed to update %s", confFilePath)
+	}
+	// Tighten perms in case the file already existed with a looser mode
+	// (WriteFile only applies the mode on creation).
+	if err := os.Chmod(confFilePath, 0600); err != nil {
+		log.Panic().Err(err).Msgf("Failed to chmod %s", confFilePath)
 	}
 	log.Info().Msgf("Successfully updated %s", confFilePath)
 	log.Info().Msg("Please restart the agent to continue")

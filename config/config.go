@@ -121,11 +121,18 @@ func LoadConfig(configfile string, log zerolog.Logger) {
 }
 
 func UpdateConfigFileWithOption(config *Config) error {
-	file, err := os.OpenFile(LoadedConfigfilePath, os.O_WRONLY|os.O_TRUNC, 0644)
+	// 0600 — the config file holds AgentToken; restrict to the owning user.
+	// OpenFile without O_CREATE ignores the mode bits, so we Chmod explicitly
+	// to tighten the perms of any pre-existing file.
+	file, err := os.OpenFile(LoadedConfigfilePath, os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to open config file for writing: %v", err)
 	}
 	defer file.Close()
+
+	if err := os.Chmod(LoadedConfigfilePath, 0600); err != nil {
+		return fmt.Errorf("failed to chmod config file: %v", err)
+	}
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
@@ -172,8 +179,24 @@ func loadConfig(fail bool, filepath string, log zerolog.Logger) {
 func GetConfig(log zerolog.Logger) *Config {
 	configLock.RLock()
 	defer configLock.RUnlock()
-	log.Debug().Msgf("config: %v", Option)
+	log.Debug().Msgf("config: %+v", Option)
 	return Option
+}
+
+// String redacts secret fields so the Config can be safely printed via %v/%+v.
+// Any future log line that formats *Config inherits the redaction.
+func (c *Config) String() string {
+	if c == nil {
+		return "<nil>"
+	}
+	// Local alias drops the Stringer method so %+v falls back to default
+	// reflection formatting (otherwise we'd recurse forever).
+	type alias Config
+	redacted := alias(*c)
+	if redacted.AgentToken != "" {
+		redacted.AgentToken = "[REDACTED]"
+	}
+	return fmt.Sprintf("%+v", redacted)
 }
 
 func LoadAgentChecks() (api.AgentChecks, error) {
