@@ -15,9 +15,9 @@ package ebpf
 // but are generally not security-relevant. Used to reduce noise.
 // ============================================================================
 
-// CoreutilsBinaries - standard Unix tools that generate high event volume
+// AKCoreutilsBinaries - standard Unix tools that generate high event volume
 // These are legitimate system utilities that execute frequently
-var CoreutilsBinaries = map[string]struct{}{
+var AKCoreutilsBinaries = map[string]struct{}{
 	// File operations
 	"cat": {}, "ls": {}, "cp": {}, "mv": {}, "rm": {}, "mkdir": {},
 	"rmdir": {}, "touch": {}, "ln": {}, "readlink": {},
@@ -69,9 +69,9 @@ var CoreutilsBinaries = map[string]struct{}{
 	"bc": {}, "dc": {},
 }
 
-// LegitPrivEscalationParents - processes that legitimately trigger privilege escalation
+// AKLegitPrivEscalationParents - processes that legitimately trigger privilege escalation
 // These are system/desktop processes that use pkexec/polkit for normal operations
-var LegitPrivEscalationParents = map[string]struct{}{
+var AKLegitPrivEscalationParents = map[string]struct{}{
 	// Desktop update/package management
 	"update-notifier":     {},
 	"update-manager":      {},
@@ -120,9 +120,9 @@ var LegitPrivEscalationParents = map[string]struct{}{
 	"beesu":               {},
 }
 
-// LoginBinaries - authentication and session management processes
+// AKLoginBinaries - authentication and session management processes
 // These handle user login/logout and generate many privilege events
-var LoginBinaries = map[string]struct{}{
+var AKLoginBinaries = map[string]struct{}{
 	"login":          {},
 	"systemd-logind": {},
 	"su":             {},
@@ -143,9 +143,9 @@ var LoginBinaries = map[string]struct{}{
 	"pam_unix.so": {},
 }
 
-// PasswdBinaries - user and group management tools
+// AKPasswdBinaries - user and group management tools
 // These legitimately modify /etc/passwd, /etc/shadow, etc.
-var PasswdBinaries = map[string]struct{}{
+var AKPasswdBinaries = map[string]struct{}{
 	"useradd":  {},
 	"userdel":  {},
 	"usermod":  {},
@@ -165,9 +165,9 @@ var PasswdBinaries = map[string]struct{}{
 	"grpck":    {},
 }
 
-// ContainerBinaries - container runtime processes
+// AKContainerBinaries - container runtime processes
 // These legitimately perform setuid/setgid for container isolation
-var ContainerBinaries = map[string]struct{}{
+var AKContainerBinaries = map[string]struct{}{
 	// Docker
 	"docker":       {},
 	"dockerd":      {},
@@ -202,9 +202,9 @@ var ContainerBinaries = map[string]struct{}{
 	"runsc": {},
 }
 
-// K8sBinaries - Kubernetes control plane and node components
+// AKK8sBinaries - Kubernetes control plane and node components
 // These are trusted infrastructure that generate many events
-var K8sBinaries = map[string]struct{}{
+var AKK8sBinaries = map[string]struct{}{
 	// Core components
 	"kubectl":                 {},
 	"kubelet":                 {},
@@ -236,9 +236,9 @@ var K8sBinaries = map[string]struct{}{
 	"istio-proxy": {},
 }
 
-// DBServerBinaries - database server processes
+// AKDBServerBinaries - database server processes
 // These are long-running services that generate many file/network events
-var DBServerBinaries = map[string]struct{}{
+var AKDBServerBinaries = map[string]struct{}{
 	// MySQL/MariaDB
 	"mysqld":         {},
 	"mysqld_safe":    {},
@@ -277,9 +277,9 @@ var DBServerBinaries = map[string]struct{}{
 	"sqlservr": {},
 }
 
-// CronBinaries - scheduled task daemons
+// AKCronBinaries - scheduled task daemons
 // These legitimately execute many child processes
-var CronBinaries = map[string]struct{}{
+var AKCronBinaries = map[string]struct{}{
 	"cron":     {},
 	"crond":    {},
 	"anacron":  {},
@@ -297,9 +297,9 @@ var CronBinaries = map[string]struct{}{
 	"run-parts": {},
 }
 
-// MailBinaries - mail server processes
+// AKMailBinaries - mail server processes
 // These handle legitimate network connections and file operations
-var MailBinaries = map[string]struct{}{
+var AKMailBinaries = map[string]struct{}{
 	// Postfix
 	"postfix":       {},
 	"master":        {}, // Postfix master
@@ -332,9 +332,9 @@ var MailBinaries = map[string]struct{}{
 	"mailx":    {},
 }
 
-// SafeEtcDirs - configuration directories that are frequently accessed
+// AKSafeEtcDirs - configuration directories that are frequently accessed
 // Reads from these paths are generally not security-relevant
-var SafeEtcDirs = []string{
+var AKSafeEtcDirs = []string{
 	"/etc/ssl/certs/",
 	"/etc/pki/",
 	"/etc/ca-certificates/",
@@ -366,8 +366,8 @@ var SafeEtcDirs = []string{
 // when detected. Used for security monitoring and threat detection.
 // ============================================================================
 
-// SSHBinaries - SSH-related processes (SOX/PCI: remote access monitoring)
-var SSHBinaries = map[string]struct{}{
+// AKSSHBinaries - SSH-related processes (SOX/PCI: remote access monitoring)
+var AKSSHBinaries = map[string]struct{}{
 	"ssh":           {},
 	"sshd":          {},
 	"ssh-agent":     {},
@@ -383,8 +383,8 @@ var SSHBinaries = map[string]struct{}{
 	"sshpass":       {},
 }
 
-// PackageMgmtBinaries - package management tools (SOX/PCI: change management)
-var PackageMgmtBinaries = map[string]struct{}{
+// AKPackageMgmtBinaries - package management tools (SOX/PCI: change management)
+var AKPackageMgmtBinaries = map[string]struct{}{
 	// Debian/Ubuntu
 	"apt":       {},
 	"apt-get":   {},
@@ -447,9 +447,9 @@ var PackageMgmtBinaries = map[string]struct{}{
 	"uv":        {},
 }
 
-// NetworkToolBinaries - network reconnaissance and diagnostic tools
+// AKNetworkToolBinaries - network reconnaissance and diagnostic tools
 // These can indicate lateral movement or network scanning
-var NetworkToolBinaries = map[string]struct{}{
+var AKNetworkToolBinaries = map[string]struct{}{
 	// Netcat variants
 	"nc":      {},
 	"ncat":    {},
@@ -510,8 +510,8 @@ var NetworkToolBinaries = map[string]struct{}{
 	"wifite":      {},
 }
 
-// ShellBinaries - interactive shells (PCI: detect shell access in containers)
-var ShellBinaries = map[string]struct{}{
+// AKShellBinaries - interactive shells (PCI: detect shell access in containers)
+var AKShellBinaries = map[string]struct{}{
 	"bash":   {},
 	"sh":     {},
 	"dash":   {},
@@ -890,49 +890,49 @@ func (c *NativeListConfig) BuildExcludeComms() map[string]struct{} {
 	result := make(map[string]struct{})
 
 	if c.ExcludeCoreutilsBinaries {
-		for k := range CoreutilsBinaries {
+		for k := range AKCoreutilsBinaries {
 			result[k] = struct{}{}
 		}
 	}
 
 	if c.ExcludeLoginBinaries {
-		for k := range LoginBinaries {
+		for k := range AKLoginBinaries {
 			result[k] = struct{}{}
 		}
 	}
 
 	if c.ExcludePasswdBinaries {
-		for k := range PasswdBinaries {
+		for k := range AKPasswdBinaries {
 			result[k] = struct{}{}
 		}
 	}
 
 	if c.ExcludeContainerBinaries {
-		for k := range ContainerBinaries {
+		for k := range AKContainerBinaries {
 			result[k] = struct{}{}
 		}
 	}
 
 	if c.ExcludeK8sBinaries {
-		for k := range K8sBinaries {
+		for k := range AKK8sBinaries {
 			result[k] = struct{}{}
 		}
 	}
 
 	if c.ExcludeDBBinaries {
-		for k := range DBServerBinaries {
+		for k := range AKDBServerBinaries {
 			result[k] = struct{}{}
 		}
 	}
 
 	if c.ExcludeCronBinaries {
-		for k := range CronBinaries {
+		for k := range AKCronBinaries {
 			result[k] = struct{}{}
 		}
 	}
 
 	if c.ExcludeMailBinaries {
-		for k := range MailBinaries {
+		for k := range AKMailBinaries {
 			result[k] = struct{}{}
 		}
 	}
@@ -945,7 +945,7 @@ func (c *NativeListConfig) BuildExcludePaths() []string {
 	var result []string
 
 	if c.ExcludeSafeEtcDirs {
-		result = append(result, SafeEtcDirs...)
+		result = append(result, AKSafeEtcDirs...)
 	}
 
 	return result
@@ -953,7 +953,7 @@ func (c *NativeListConfig) BuildExcludePaths() []string {
 
 // IsNetworkTool checks if a process name is a network reconnaissance tool
 func IsNetworkTool(comm string) bool {
-	_, ok := NetworkToolBinaries[comm]
+	_, ok := AKNetworkToolBinaries[comm]
 	return ok
 }
 
@@ -971,19 +971,19 @@ func IsMinerPort(port int) bool {
 
 // IsShellBinary checks if a process name is an interactive shell
 func IsShellBinary(comm string) bool {
-	_, ok := ShellBinaries[comm]
+	_, ok := AKShellBinaries[comm]
 	return ok
 }
 
 // IsSSHBinary checks if a process name is SSH-related
 func IsSSHBinary(comm string) bool {
-	_, ok := SSHBinaries[comm]
+	_, ok := AKSSHBinaries[comm]
 	return ok
 }
 
 // IsPackageManager checks if a process name is a package manager
 func IsPackageManager(comm string) bool {
-	_, ok := PackageMgmtBinaries[comm]
+	_, ok := AKPackageMgmtBinaries[comm]
 	return ok
 }
 
@@ -1013,13 +1013,13 @@ func IsPCICriticalPort(port int) bool {
 
 // IsContainerBinary checks if a process is a container runtime
 func IsContainerBinary(comm string) bool {
-	_, ok := ContainerBinaries[comm]
+	_, ok := AKContainerBinaries[comm]
 	return ok
 }
 
 // IsLegitPrivEscalationParent checks if a parent process legitimately triggers privilege escalation
 func IsLegitPrivEscalationParent(comm string) bool {
-	_, ok := LegitPrivEscalationParents[comm]
+	_, ok := AKLegitPrivEscalationParents[comm]
 	return ok
 }
 

@@ -15,8 +15,8 @@ func TestCoreutilsBinaries_ContainsExpectedTools(t *testing.T) {
 	}
 
 	for _, tool := range expectedTools {
-		if _, ok := CoreutilsBinaries[tool]; !ok {
-			t.Errorf("CoreutilsBinaries should contain '%s'", tool)
+		if _, ok := AKCoreutilsBinaries[tool]; !ok {
+			t.Errorf("AKCoreutilsBinaries should contain '%s'", tool)
 		}
 	}
 }
@@ -27,8 +27,8 @@ func TestContainerBinaries_ContainsRuntimes(t *testing.T) {
 	}
 
 	for _, runtime := range expectedRuntimes {
-		if _, ok := ContainerBinaries[runtime]; !ok {
-			t.Errorf("ContainerBinaries should contain '%s'", runtime)
+		if _, ok := AKContainerBinaries[runtime]; !ok {
+			t.Errorf("AKContainerBinaries should contain '%s'", runtime)
 		}
 	}
 }
@@ -40,8 +40,8 @@ func TestK8sBinaries_ContainsComponents(t *testing.T) {
 	}
 
 	for _, component := range expectedComponents {
-		if _, ok := K8sBinaries[component]; !ok {
-			t.Errorf("K8sBinaries should contain '%s'", component)
+		if _, ok := AKK8sBinaries[component]; !ok {
+			t.Errorf("AKK8sBinaries should contain '%s'", component)
 		}
 	}
 }
@@ -52,8 +52,8 @@ func TestDBServerBinaries_ContainsDatabases(t *testing.T) {
 	}
 
 	for _, db := range expectedDBs {
-		if _, ok := DBServerBinaries[db]; !ok {
-			t.Errorf("DBServerBinaries should contain '%s'", db)
+		if _, ok := AKDBServerBinaries[db]; !ok {
+			t.Errorf("AKDBServerBinaries should contain '%s'", db)
 		}
 	}
 }
@@ -68,8 +68,8 @@ func TestSSHBinaries_ContainsSSHTools(t *testing.T) {
 	}
 
 	for _, tool := range expectedTools {
-		if _, ok := SSHBinaries[tool]; !ok {
-			t.Errorf("SSHBinaries should contain '%s'", tool)
+		if _, ok := AKSSHBinaries[tool]; !ok {
+			t.Errorf("AKSSHBinaries should contain '%s'", tool)
 		}
 	}
 }
@@ -80,8 +80,8 @@ func TestNetworkToolBinaries_ContainsReconTools(t *testing.T) {
 	}
 
 	for _, tool := range expectedTools {
-		if _, ok := NetworkToolBinaries[tool]; !ok {
-			t.Errorf("NetworkToolBinaries should contain '%s'", tool)
+		if _, ok := AKNetworkToolBinaries[tool]; !ok {
+			t.Errorf("AKNetworkToolBinaries should contain '%s'", tool)
 		}
 	}
 }
@@ -92,8 +92,8 @@ func TestShellBinaries_ContainsShells(t *testing.T) {
 	}
 
 	for _, shell := range expectedShells {
-		if _, ok := ShellBinaries[shell]; !ok {
-			t.Errorf("ShellBinaries should contain '%s'", shell)
+		if _, ok := AKShellBinaries[shell]; !ok {
+			t.Errorf("AKShellBinaries should contain '%s'", shell)
 		}
 	}
 }
@@ -264,20 +264,20 @@ func TestBuildExcludeComms_WithAllEnabled(t *testing.T) {
 	result := config.BuildExcludeComms()
 
 	// Should contain entries from all enabled lists
-	expectedMinSize := len(CoreutilsBinaries) + len(LoginBinaries) + len(ContainerBinaries)
+	expectedMinSize := len(AKCoreutilsBinaries) + len(AKLoginBinaries) + len(AKContainerBinaries)
 	if len(result) < expectedMinSize {
 		t.Errorf("Expected at least %d entries, got %d", expectedMinSize, len(result))
 	}
 
 	// Verify specific entries exist
 	if _, ok := result["cat"]; !ok {
-		t.Error("Result should contain 'cat' from CoreutilsBinaries")
+		t.Error("Result should contain 'cat' from AKCoreutilsBinaries")
 	}
 	if _, ok := result["docker"]; !ok {
-		t.Error("Result should contain 'docker' from ContainerBinaries")
+		t.Error("Result should contain 'docker' from AKContainerBinaries")
 	}
 	if _, ok := result["kubectl"]; !ok {
-		t.Error("Result should contain 'kubectl' from K8sBinaries")
+		t.Error("Result should contain 'kubectl' from AKK8sBinaries")
 	}
 }
 
@@ -867,24 +867,24 @@ func TestAlertFilter_ComplianceHelpers(t *testing.T) {
 
 func TestListSizes_ReasonableCount(t *testing.T) {
 	// Verify lists have reasonable sizes (not empty, not suspiciously small)
-	if len(CoreutilsBinaries) < 50 {
-		t.Errorf("CoreutilsBinaries seems too small: %d entries", len(CoreutilsBinaries))
+	if len(AKCoreutilsBinaries) < 50 {
+		t.Errorf("AKCoreutilsBinaries seems too small: %d entries", len(AKCoreutilsBinaries))
 	}
 
-	if len(ContainerBinaries) < 10 {
-		t.Errorf("ContainerBinaries seems too small: %d entries", len(ContainerBinaries))
+	if len(AKContainerBinaries) < 10 {
+		t.Errorf("AKContainerBinaries seems too small: %d entries", len(AKContainerBinaries))
 	}
 
-	if len(K8sBinaries) < 10 {
-		t.Errorf("K8sBinaries seems too small: %d entries", len(K8sBinaries))
+	if len(AKK8sBinaries) < 10 {
+		t.Errorf("AKK8sBinaries seems too small: %d entries", len(AKK8sBinaries))
 	}
 
-	if len(NetworkToolBinaries) < 20 {
-		t.Errorf("NetworkToolBinaries seems too small: %d entries", len(NetworkToolBinaries))
+	if len(AKNetworkToolBinaries) < 20 {
+		t.Errorf("AKNetworkToolBinaries seems too small: %d entries", len(AKNetworkToolBinaries))
 	}
 
-	if len(PackageMgmtBinaries) < 20 {
-		t.Errorf("PackageMgmtBinaries seems too small: %d entries", len(PackageMgmtBinaries))
+	if len(AKPackageMgmtBinaries) < 20 {
+		t.Errorf("AKPackageMgmtBinaries seems too small: %d entries", len(AKPackageMgmtBinaries))
 	}
 
 	if len(MinerPorts) < 10 {

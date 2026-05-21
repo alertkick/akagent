@@ -45,8 +45,8 @@ func matchSSHActivity(event *SecurityEvent) bool {
 
 // matchPrivilegeEscalation detects privilege escalation attempts
 // Matches: setuid/setgid to root (UID/GID 0), excluding:
-// - Container runtimes (ContainerBinaries)
-// - Legitimate system processes (LegitPrivEscalationParents)
+// - Container runtimes (AKContainerBinaries)
+// - Legitimate system processes (AKLegitPrivEscalationParents)
 func matchPrivilegeEscalation(event *SecurityEvent) bool {
 	if event.Category != "privilege" {
 		return false
@@ -77,7 +77,7 @@ func matchPrivilegeEscalation(event *SecurityEvent) bool {
 	// Exclude container runtimes - they legitimately setuid/setgid to root
 	// Check both the process and its parent, since container shims spawn
 	// child processes (e.g. healthcheck scripts) that inherit setuid calls
-	for runtime := range ContainerBinaries {
+	for runtime := range AKContainerBinaries {
 		if strings.HasPrefix(processName, runtime) || strings.HasPrefix(parentName, runtime) {
 			return false
 		}
@@ -93,7 +93,7 @@ func matchPrivilegeEscalation(event *SecurityEvent) bool {
 	}
 
 	// Also check with prefix matching for truncated names (Linux comm is 15 chars max)
-	for legit := range LegitPrivEscalationParents {
+	for legit := range AKLegitPrivEscalationParents {
 		if len(legit) >= 15 {
 			// Check if truncated version matches
 			truncated := legit[:15]
@@ -358,7 +358,7 @@ func matchNewListeningPort(event *SecurityEvent) bool {
 
 // matchPackageManagement detects package manager executions
 // Only enabled in compliance mode
-// Uses PackageMgmtBinaries from native_lists.go
+// Uses AKPackageMgmtBinaries from native_lists.go
 func matchPackageManagement(event *SecurityEvent) bool {
 	if event.Category != "process" || event.Rule != "Process Execution" {
 		return false

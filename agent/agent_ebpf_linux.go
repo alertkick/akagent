@@ -92,10 +92,9 @@ func (a *agent) handleEBPFRequest(req client.Request) bool {
 	case "native_agent.status":
 		a.log.Debug().Msg("agent.HandleServerRequest - received native_agent.status request")
 		a.handleNativeAgentStatusRequest(req)
-	case "refresh_native_config", "refresh_security_rules", "refresh_falco_rules":
+	case "refresh_native_config", "refresh_security_rules":
 		// refresh_security_rules is the current name; refresh_native_config is the
-		// older internal name and refresh_falco_rules is the legacy wire name still
-		// used by older apapi versions. They all do the same thing.
+		// older internal alias kept while the API is migrated.
 		a.log.Debug().Str("method", req.Method).Msg("agent.HandleServerRequest - received refresh_native_config request")
 		a.handleRefreshNativeConfigRequest(req)
 	case "agent.refresh_compliance":

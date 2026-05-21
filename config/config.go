@@ -52,11 +52,10 @@ type Config struct {
 	// Use "all" to enable all sections. Empty means only basic logs.
 	LogSections string `json:"log_sections"`
 
-	ProcFS          string
-	KernelVersion   string
-	HubbleLib       string
-	BTF             string
-	Verbosity       int
+	ProcFS        string
+	KernelVersion string
+	BTF           string
+	Verbosity     int
 	ForceSmallProgs bool
 	ForceLargeProgs bool
 
@@ -89,7 +88,6 @@ var (
 		Debug:                   false,
 		ProcFS:                  "/proc",
 		KernelVersion:           "",
-		HubbleLib:               "/var/lib/alertkick-agent/",
 		BTF:                     "",
 		Verbosity:               3,
 		ForceSmallProgs:         false,

@@ -5,7 +5,6 @@
   "AgentName": "my-server",
   "Subdomain": "YOUR_SUBDOMAIN_HERE",
   "Endpoint": "monit.alertkick.com:8484",
-  "FalcoEnabled": false,
   "TLSInsecure": false,
   "TLSCAFilePath": ""
 }

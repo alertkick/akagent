@@ -212,7 +212,7 @@ Kernel (eBPF) → Agent (Enrichment) → Endpoint (Gateway) → Kafka → API (I
 
 1. **eBPF probes** capture raw syscall events in kernel
 2. **Agent** enriches events with process context (args, cwd, container info)
-3. **Agent** waits for process end to capture full context (like Tetragon)
+3. **Agent** waits for process end so full process context (cwd, container, full arg list) is attached before the event leaves the host
 4. **Endpoint** receives events and pushes to Kafka
 5. **API** applies compliance tags, runs LLM analysis, creates alerts
 
