@@ -524,290 +524,16 @@ var AKShellBinaries = map[string]struct{}{
 	"busybox": {},
 }
 
-// MinerPorts - common cryptocurrency mining pool ports
-var MinerPorts = map[int]struct{}{
-	3333:  {}, // Stratum
-	3334:  {},
-	3335:  {},
-	4444:  {}, // XMR/ETH pools
-	5555:  {},
-	5556:  {},
-	6666:  {},
-	7777:  {},
-	8008:  {},
-	8080:  {}, // Some pools use this
-	8888:  {},
-	9999:  {},
-	14433: {}, // Monero SSL
-	14444: {},
-	45560: {}, // Monero
-	45700: {},
-}
-
-// MinerDomains - cryptocurrency mining pool domain patterns
-// Note: Use strings.Contains or suffix matching for these
-var MinerDomains = []string{
-	"nanopool.org",
-	"supportxmr.com",
-	"xmrpool.eu",
-	"moneropool.com",
-	"minexmr.com",
-	"hashvault.pro",
-	"2miners.com",
-	"f2pool.com",
-	"antpool.com",
-	"btc.com",
-	"slushpool.com",
-	"nicehash.com",
-	"ethermine.org",
-	"sparkpool.com",
-	"poolin.com",
-	"viabtc.com",
-	"cryptonight-hub.miningpoolhub.com",
-	"coinhive.com",
-	"coin-hive.com",
-	"jsecoin.com",
-	"crypto-loot.com",
-	"monerominer.rocks",
-	"webminepool.com",
-}
-
-// MinerProcessNames - known cryptocurrency miner process names
-var MinerProcessNames = map[string]struct{}{
-	"xmrig":         {},
-	"xmr-stak":      {},
-	"minerd":        {},
-	"cpuminer":      {},
-	"ccminer":       {},
-	"cgminer":       {},
-	"bfgminer":      {},
-	"ethminer":      {},
-	"phoenix":       {},
-	"phoenixminer":  {},
-	"claymore":      {},
-	"lolminer":      {},
-	"nbminer":       {},
-	"t-rex":         {},
-	"gminer":        {},
-	"xmr":           {},
-	"monero":        {},
-	"kryptex":       {},
-}
-
-// ============================= SOX COMPLIANCE LISTS ========================
-// SOX (Sarbanes-Oxley) requirements for financial system controls
-// ============================================================================
-
-// SOXPrivilegedCommands - commands indicating privileged access (SOX Access Control)
-var SOXPrivilegedCommands = map[string]struct{}{
-	"sudo":     {},
-	"su":       {},
-	"pkexec":   {},
-	"doas":     {},
-	"visudo":   {},
-	"sudoedit": {},
-	"passwd":   {},
-	"usermod":  {},
-	"groupmod": {},
-	"chown":    {},
-	"chmod":    {},
-	"setfacl":  {},
-	"chattr":   {},
-}
-
-// SOXAuditBinaries - audit and logging system processes
-// Tampering with these indicates audit log manipulation
-var SOXAuditBinaries = map[string]struct{}{
-	"auditd":     {},
-	"auditctl":   {},
-	"aureport":   {},
-	"ausearch":   {},
-	"augenrules": {},
-	"rsyslogd":   {},
-	"rsyslog":    {},
-	"syslog-ng":  {},
-	"syslogd":    {},
-	"journald":   {},
-	"systemd-journald": {},
-	"logrotate":  {},
-}
-
-// SOXCriticalPaths - files requiring change monitoring for SOX compliance
-var SOXCriticalPaths = []string{
-	// Authentication and authorization
-	"/etc/passwd",
-	"/etc/shadow",
-	"/etc/group",
-	"/etc/gshadow",
-	"/etc/sudoers",
-	"/etc/sudoers.d/",
-	// SSH configuration
-	"/etc/ssh/sshd_config",
-	"/etc/ssh/ssh_config",
-	"/etc/ssh/",
-	// PAM configuration
-	"/etc/pam.d/",
-	"/etc/security/",
-	"/etc/security/limits.conf",
-	"/etc/security/access.conf",
-	// Audit configuration
-	"/etc/audit/",
-	"/etc/audit/auditd.conf",
-	"/etc/audit/audit.rules",
-	"/var/log/audit/",
-	// Logging configuration
-	"/etc/rsyslog.conf",
-	"/etc/rsyslog.d/",
-	"/etc/syslog-ng/",
-	"/var/log/auth.log",
-	"/var/log/secure",
-	"/var/log/messages",
-	// Cron (scheduled tasks - change control)
-	"/etc/crontab",
-	"/etc/cron.d/",
-	"/etc/cron.daily/",
-	"/etc/cron.hourly/",
-	"/etc/cron.weekly/",
-	"/etc/cron.monthly/",
-	"/var/spool/cron/",
-	// System startup
-	"/etc/rc.local",
-	"/etc/init.d/",
-	"/etc/systemd/system/",
-	// Network configuration
-	"/etc/hosts",
-	"/etc/hosts.allow",
-	"/etc/hosts.deny",
-	"/etc/resolv.conf",
-}
-
-// SOXFinancialDataPaths - paths containing financial data (SOX Data Protection)
-var SOXFinancialDataPaths = []string{
-	"/var/lib/mysql/",
-	"/var/lib/postgresql/",
-	"/var/lib/pgsql/",
-	"/var/lib/mongodb/",
-	"/opt/oracle/",
-	"/opt/mssql/",
-	"/data/",
-	"/srv/",
-}
-
-// ============================= PCI-DSS COMPLIANCE LISTS ====================
-// PCI-DSS requirements for payment card data protection
-// ============================================================================
-
-// PCICriticalPorts - ports requiring monitoring per PCI-DSS
-var PCICriticalPorts = map[int]struct{}{
-	// Remote access (PCI Req 8)
-	22:   {}, // SSH
-	23:   {}, // Telnet (should not be used)
-	3389: {}, // RDP
-	5900: {}, // VNC
-	5901: {},
-	5902: {},
-	// Databases containing cardholder data (PCI Req 3)
-	3306:  {}, // MySQL
-	5432:  {}, // PostgreSQL
-	1433:  {}, // SQL Server
-	1521:  {}, // Oracle
-	27017: {}, // MongoDB
-	6379:  {}, // Redis
-	9042:  {}, // Cassandra
-	// Web services (PCI Req 6)
-	80:   {},
-	443:  {},
-	8080: {},
-	8443: {},
-	// FTP (should use SFTP)
-	20: {},
-	21: {},
-}
-
-// PCIRemoteAccessBinaries - remote access tools per PCI Req 8
-var PCIRemoteAccessBinaries = map[string]struct{}{
-	// SSH (acceptable)
-	"ssh":         {},
-	"sshd":        {},
-	"scp":         {},
-	"sftp":        {},
-	// Legacy/insecure (should be flagged)
-	"telnet":      {},
-	"telnetd":     {},
-	"rsh":         {},
-	"rshd":        {},
-	"rlogin":      {},
-	"rlogind":     {},
-	// VNC
-	"vncserver":   {},
-	"Xvnc":        {},
-	"x11vnc":      {},
-	"vncviewer":   {},
-	"tigervnc":    {},
-	// RDP
-	"xrdp":        {},
-	"xfreerdp":    {},
-	"rdesktop":    {},
-	// TeamViewer etc
-	"teamviewer":  {},
-	"anydesk":     {},
-}
-
-// PCIAntiMalwareBinaries - anti-malware tools per PCI Req 5
-var PCIAntiMalwareBinaries = map[string]struct{}{
-	"clamav":       {},
-	"clamd":        {},
-	"clamscan":     {},
-	"freshclam":    {},
-	"rkhunter":     {},
-	"chkrootkit":   {},
-	"aide":         {},
-	"tripwire":     {},
-	"ossec":        {},
-	"ossec-agent":  {},
-	"ossec-server": {},
-	"sophos":       {},
-	"falcon-sensor": {},
-	"carbonblack":  {},
-}
-
-// PCILoggingBinaries - logging systems per PCI Req 10
-var PCILoggingBinaries = map[string]struct{}{
-	"rsyslog":           {},
-	"rsyslogd":          {},
-	"syslog-ng":         {},
-	"syslogd":           {},
-	"journald":          {},
-	"systemd-journald":  {},
-	"filebeat":          {},
-	"logstash":          {},
-	"fluentd":           {},
-	"fluent-bit":        {},
-	"vector":            {},
-	"splunk":            {},
-	"splunkd":           {},
-}
-
-// PCICardholderDataPaths - paths that may contain cardholder data (PCI Req 3)
-// These are examples - actual paths should be configured per environment
-var PCICardholderDataPaths = []string{
-	"/var/lib/mysql/",
-	"/var/lib/postgresql/",
-	"/var/lib/pgsql/",
-	"/opt/payment/",
-	"/srv/payment/",
-	"/data/transactions/",
-	"/var/log/payment/",
-}
-
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
 
-// NativeListConfig controls which native lists are active
+// NativeListConfig controls which native lists are active in the agent's
+// noise filter. Framework lists (PCI/SOX/threat-intel) and the matchers
+// that consume them now live at the endpoint — the agent only carries
+// the public-knowledge exclusion sets needed to drop high-volume noise
+// at source.
 type NativeListConfig struct {
-	// ---- Exclusions (true = exclude from events to reduce noise) ----
-
 	// ExcludeCoreutilsBinaries excludes standard Unix tools (cat, ls, cp, etc.)
 	ExcludeCoreutilsBinaries bool `yaml:"exclude_coreutils_binaries"`
 
@@ -834,34 +560,11 @@ type NativeListConfig struct {
 
 	// ExcludeSafeEtcDirs excludes safe /etc paths from file monitoring
 	ExcludeSafeEtcDirs bool `yaml:"exclude_safe_etc_dirs"`
-
-	// ---- Detections (true = alert on these) ----
-
-	// DetectNetworkTools alerts on network reconnaissance tools (nc, nmap, tcpdump, etc.)
-	DetectNetworkTools bool `yaml:"detect_network_tools"`
-
-	// DetectMinerActivity alerts on cryptocurrency mining activity
-	DetectMinerActivity bool `yaml:"detect_miner_activity"`
-
-	// DetectShellInContainer alerts on shell execution inside containers
-	DetectShellInContainer bool `yaml:"detect_shell_in_container"`
-
-	// DetectPackageManagement alerts on package manager execution
-	DetectPackageManagement bool `yaml:"detect_package_management"`
-
-	// ---- Compliance (auto-enabled by compliance profile) ----
-
-	// SOXMonitoring enables SOX-specific monitoring rules
-	SOXMonitoring bool `yaml:"sox_monitoring"`
-
-	// PCIMonitoring enables PCI-DSS specific monitoring rules
-	PCIMonitoring bool `yaml:"pci_monitoring"`
 }
 
-// DefaultNativeListConfig returns the default configuration for native lists
+// DefaultNativeListConfig returns the default configuration for noise filtering.
 func DefaultNativeListConfig() NativeListConfig {
 	return NativeListConfig{
-		// Exclusions - enable conservative defaults to reduce noise
 		ExcludeCoreutilsBinaries: true,
 		ExcludeLoginBinaries:     true,
 		ExcludePasswdBinaries:    false, // Keep visibility into user management
@@ -871,21 +574,11 @@ func DefaultNativeListConfig() NativeListConfig {
 		ExcludeCronBinaries:      true,
 		ExcludeMailBinaries:      true,
 		ExcludeSafeEtcDirs:       true,
-
-		// Detections - enable by default for security monitoring
-		DetectNetworkTools:      true,
-		DetectMinerActivity:     true,
-		DetectShellInContainer:  true,
-		DetectPackageManagement: true,
-
-		// Compliance - disabled by default, enabled via compliance profile
-		SOXMonitoring: false,
-		PCIMonitoring: false,
 	}
 }
 
-// BuildExcludeComms returns a composite exclusion map based on config
-// This merges all enabled exclusion lists into a single map for O(1) lookup
+// BuildExcludeComms returns a composite exclusion map based on config.
+// This merges all enabled exclusion lists into a single map for O(1) lookup.
 func (c *NativeListConfig) BuildExcludeComms() map[string]struct{} {
 	result := make(map[string]struct{})
 
@@ -894,43 +587,36 @@ func (c *NativeListConfig) BuildExcludeComms() map[string]struct{} {
 			result[k] = struct{}{}
 		}
 	}
-
 	if c.ExcludeLoginBinaries {
 		for k := range AKLoginBinaries {
 			result[k] = struct{}{}
 		}
 	}
-
 	if c.ExcludePasswdBinaries {
 		for k := range AKPasswdBinaries {
 			result[k] = struct{}{}
 		}
 	}
-
 	if c.ExcludeContainerBinaries {
 		for k := range AKContainerBinaries {
 			result[k] = struct{}{}
 		}
 	}
-
 	if c.ExcludeK8sBinaries {
 		for k := range AKK8sBinaries {
 			result[k] = struct{}{}
 		}
 	}
-
 	if c.ExcludeDBBinaries {
 		for k := range AKDBServerBinaries {
 			result[k] = struct{}{}
 		}
 	}
-
 	if c.ExcludeCronBinaries {
 		for k := range AKCronBinaries {
 			result[k] = struct{}{}
 		}
 	}
-
 	if c.ExcludeMailBinaries {
 		for k := range AKMailBinaries {
 			result[k] = struct{}{}
@@ -940,134 +626,31 @@ func (c *NativeListConfig) BuildExcludeComms() map[string]struct{} {
 	return result
 }
 
-// BuildExcludePaths returns a composite exclusion path list based on config
+// BuildExcludePaths returns a composite exclusion path list based on config.
 func (c *NativeListConfig) BuildExcludePaths() []string {
 	var result []string
-
 	if c.ExcludeSafeEtcDirs {
 		result = append(result, AKSafeEtcDirs...)
 	}
-
 	return result
 }
 
-// IsNetworkTool checks if a process name is a network reconnaissance tool
-func IsNetworkTool(comm string) bool {
-	_, ok := AKNetworkToolBinaries[comm]
-	return ok
-}
-
-// IsMinerProcess checks if a process name is a known cryptocurrency miner
-func IsMinerProcess(comm string) bool {
-	_, ok := MinerProcessNames[comm]
-	return ok
-}
-
-// IsMinerPort checks if a port is commonly used for cryptocurrency mining
-func IsMinerPort(port int) bool {
-	_, ok := MinerPorts[port]
-	return ok
-}
-
-// IsShellBinary checks if a process name is an interactive shell
+// IsShellBinary checks if a process name is an interactive shell.
+// Kept on the agent because shell-name lookup is occasionally useful for
+// noise-filter exclusion (e.g., "drop trivial shell completions").
 func IsShellBinary(comm string) bool {
 	_, ok := AKShellBinaries[comm]
 	return ok
 }
 
-// IsSSHBinary checks if a process name is SSH-related
+// IsSSHBinary checks if a process name is SSH-related.
 func IsSSHBinary(comm string) bool {
 	_, ok := AKSSHBinaries[comm]
 	return ok
 }
 
-// IsPackageManager checks if a process name is a package manager
-func IsPackageManager(comm string) bool {
-	_, ok := AKPackageMgmtBinaries[comm]
-	return ok
-}
-
-// IsSOXPrivilegedCommand checks if a command is privileged per SOX
-func IsSOXPrivilegedCommand(comm string) bool {
-	_, ok := SOXPrivilegedCommands[comm]
-	return ok
-}
-
-// IsSOXAuditBinary checks if a process is an audit system component
-func IsSOXAuditBinary(comm string) bool {
-	_, ok := SOXAuditBinaries[comm]
-	return ok
-}
-
-// IsPCIRemoteAccessBinary checks if a process is a remote access tool
-func IsPCIRemoteAccessBinary(comm string) bool {
-	_, ok := PCIRemoteAccessBinaries[comm]
-	return ok
-}
-
-// IsPCICriticalPort checks if a port requires PCI monitoring
-func IsPCICriticalPort(port int) bool {
-	_, ok := PCICriticalPorts[port]
-	return ok
-}
-
-// IsContainerBinary checks if a process is a container runtime
+// IsContainerBinary checks if a process is a container runtime.
 func IsContainerBinary(comm string) bool {
 	_, ok := AKContainerBinaries[comm]
 	return ok
-}
-
-// IsLegitPrivEscalationParent checks if a parent process legitimately triggers privilege escalation
-func IsLegitPrivEscalationParent(comm string) bool {
-	_, ok := AKLegitPrivEscalationParents[comm]
-	return ok
-}
-
-// PathMatchesSOXCritical checks if a path matches SOX critical paths
-func PathMatchesSOXCritical(path string) bool {
-	for _, critical := range SOXCriticalPaths {
-		if len(path) >= len(critical) && path[:len(critical)] == critical {
-			return true
-		}
-		// Also check if the critical path is a prefix of the given path
-		if len(critical) > 0 && critical[len(critical)-1] == '/' {
-			// Directory prefix match
-			if len(path) >= len(critical) && path[:len(critical)] == critical {
-				return true
-			}
-		} else {
-			// Exact match or path starts with critical path
-			if path == critical {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// PathMatchesPCICardholder checks if a path matches PCI cardholder data paths
-func PathMatchesPCICardholder(path string) bool {
-	for _, dataPath := range PCICardholderDataPaths {
-		if len(path) >= len(dataPath) && path[:len(dataPath)] == dataPath {
-			return true
-		}
-	}
-	return false
-}
-
-// DomainMatchesMiner checks if a domain is associated with cryptocurrency mining
-func DomainMatchesMiner(domain string) bool {
-	for _, minerDomain := range MinerDomains {
-		// Check if domain ends with the miner domain
-		if len(domain) >= len(minerDomain) {
-			suffix := domain[len(domain)-len(minerDomain):]
-			if suffix == minerDomain {
-				// Ensure it's a proper domain boundary
-				if len(domain) == len(minerDomain) || domain[len(domain)-len(minerDomain)-1] == '.' {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }

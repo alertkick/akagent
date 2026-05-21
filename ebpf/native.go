@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"akagent/ebpf/bpfgen"
-	"akagent/ebpf/rules"
 	"akagent/logger"
 
 	"github.com/cilium/ebpf/link"
@@ -120,7 +119,6 @@ type NativeEBPFAgent struct {
 	filter        *EventFilter
 	alertFilter   *AlertFilter
 	rateLimiter   *RateLimiter
-	ruleEngine    *rules.RuleEngine
 	enricher      *EventEnricher
 	eventChan     chan SecurityEvent
 	running       bool
@@ -243,16 +241,12 @@ func NewNativeAgentWithConfig(configPath string) (*NativeEBPFAgent, error) {
 	enricher := NewEventEnricherWithTTL(cacheTTL)
 	enricher.SetEnabled(config.EnableEnrichment)
 
-	// Create rule engine (initially empty - populated by refresh_compliance)
-	ruleEngine := rules.NewRuleEngine()
-
 	agent := &NativeEBPFAgent{
 		config:        config,
 		configPath:    configPath,
 		filter:        NewEventFilter(&config),
-		alertFilter:   NewAlertFilterWithEngine(&config.AlertFilter, ruleEngine),
+		alertFilter:   NewAlertFilterWithLists(&config.AlertFilter, &config.NativeLists),
 		rateLimiter:   NewRateLimiter(config.RateLimiter),
-		ruleEngine:    ruleEngine,
 		enricher:      enricher,
 		eventChan:     make(chan SecurityEvent, eventChannelBufferSize),
 		shutdownChan:  make(chan struct{}),
@@ -451,31 +445,13 @@ func (a *NativeEBPFAgent) GetNativeConfig() NativeConfig {
 	return a.config
 }
 
-// UpdateComplianceConfig updates the rule engine with a new compliance config from the API
-// This is called when a refresh_compliance command is received
+// UpdateComplianceConfig is a wire-compat no-op. The agent no longer
+// evaluates compliance rules locally — the endpoint owns that logic now.
+// The handler still accepts the command so older API versions can keep
+// using it as a "enable/disable native agent" trigger.
 func (a *NativeEBPFAgent) UpdateComplianceConfig(configJSON []byte) error {
-	profileConfig, err := rules.ParseProfileJSON(configJSON)
-	if err != nil {
-		return fmt.Errorf("failed to parse compliance profile: %w", err)
-	}
-
-	if err := a.ruleEngine.UpdateProfile(profileConfig); err != nil {
-		return fmt.Errorf("failed to update rule engine: %w", err)
-	}
-
-	nativeLog.Info().
-		Str("profile", profileConfig.Metadata.Name).
-		Int("lists", len(profileConfig.Lists)).
-		Int("macros", len(profileConfig.Macros)).
-		Int("rules", len(profileConfig.Rules)).
-		Msg("Updated compliance config in rule engine")
-
+	nativeLog.Debug().Int("bytes", len(configJSON)).Msg("UpdateComplianceConfig received (no-op on agent — endpoint owns rule evaluation)")
 	return nil
-}
-
-// GetRuleEngine returns the rule engine for testing/inspection
-func (a *NativeEBPFAgent) GetRuleEngine() *rules.RuleEngine {
-	return a.ruleEngine
 }
 
 // GetConfigPath returns the configuration path
@@ -483,93 +459,30 @@ func (a *NativeEBPFAgent) GetConfigPath() string {
 	return a.configPath
 }
 
-// DefaultRulesPath is the default location for compiled detection rules
-const DefaultRulesPath = "/etc/alertkick-agent/rules.yaml"
-
-// GetRules returns the rule files (native agent doesn't use external rules)
+// GetRules returns the rule files (native agent doesn't carry rules anymore)
 func (a *NativeEBPFAgent) GetRules() ([]RuleFile, error) {
 	return nil, nil
 }
 
-// UpdateRules updates the rule files (no-op for native agent)
+// UpdateRules is a wire-compat no-op.
 func (a *NativeEBPFAgent) UpdateRules(rules []RuleFile) error {
 	return nil
 }
 
-// GetRulesDir returns the rules directory (empty for native agent)
+// GetRulesDir returns the rules directory (empty — rules live on endpoint).
 func (a *NativeEBPFAgent) GetRulesDir() string {
 	return ""
 }
 
-// UpdateRulesFromYAML parses compiled YAML rules, updates the rule engine, and persists to disk
+// UpdateRulesFromYAML is a wire-compat no-op. The agent does not run
+// rules locally; the endpoint evaluates each event after it arrives.
 func (a *NativeEBPFAgent) UpdateRulesFromYAML(yamlData []byte) error {
-	// Handle empty YAML — clear all rules
-	if len(yamlData) == 0 {
-		yamlData = []byte("metadata:\n  name: empty\nrules: []\n")
-	}
-
-	profileConfig, err := rules.ParseProfileYAML(yamlData)
-	if err != nil {
-		return fmt.Errorf("failed to parse rules YAML: %w", err)
-	}
-
-	if err := a.ruleEngine.UpdateProfile(profileConfig); err != nil {
-		return fmt.Errorf("failed to update rule engine: %w", err)
-	}
-
-	// Persist to disk for recovery on restart
-	if err := a.saveRulesToDisk(yamlData); err != nil {
-		nativeLog.Warn().Err(err).Msg("Failed to persist rules to disk")
-		// Don't fail - rules are loaded in memory
-	}
-
-	ruleCount := a.ruleEngine.GetRuleCount()
-	nativeLog.Info().
-		Str("profile", profileConfig.Metadata.Name).
-		Int("rules", ruleCount).
-		Int("lists", len(profileConfig.Lists)).
-		Int("macros", len(profileConfig.Macros)).
-		Msg("Updated detection rules from compiled YAML")
-
+	nativeLog.Debug().Int("bytes", len(yamlData)).Msg("UpdateRulesFromYAML received (no-op on agent — endpoint owns rule evaluation)")
 	return nil
 }
 
-// LoadRulesFromDisk loads persisted rules on startup
+// LoadRulesFromDisk is a wire-compat no-op.
 func (a *NativeEBPFAgent) LoadRulesFromDisk() error {
-	data, err := os.ReadFile(DefaultRulesPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			nativeLog.Debug().Msg("No persisted rules file found, starting with empty rule engine")
-			return nil
-		}
-		return fmt.Errorf("failed to read rules file: %w", err)
-	}
-
-	profileConfig, err := rules.ParseProfileYAML(data)
-	if err != nil {
-		return fmt.Errorf("failed to parse persisted rules: %w", err)
-	}
-
-	if err := a.ruleEngine.UpdateProfile(profileConfig); err != nil {
-		return fmt.Errorf("failed to load persisted rules: %w", err)
-	}
-
-	nativeLog.Info().
-		Str("profile", profileConfig.Metadata.Name).
-		Int("rules", a.ruleEngine.GetRuleCount()).
-		Msg("Loaded persisted detection rules from disk")
-
-	return nil
-}
-
-func (a *NativeEBPFAgent) saveRulesToDisk(yamlData []byte) error {
-	dir := "/etc/alertkick-agent"
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create rules directory: %w", err)
-	}
-	if err := os.WriteFile(DefaultRulesPath, yamlData, 0644); err != nil {
-		return fmt.Errorf("failed to write rules file: %w", err)
-	}
 	return nil
 }
 

@@ -232,11 +232,8 @@ type NativeAgentConfig struct {
 	EnrichmentCacheTTLSeconds int  `json:"enrichment_cache_ttl_seconds,omitempty" yaml:"enrichment_cache_ttl_seconds,omitempty"`
 
 	// ---- Alerting ----
-	EnableAlerts bool                     `json:"enable_alerts" yaml:"enable_alerts"`
-	AlertRules   []NativeAgentAlertRule   `json:"alert_rules,omitempty" yaml:"alert_rules,omitempty"`
-
-	// ---- Compliance Profiles ----
-	ComplianceProfiles []string `json:"compliance_profiles,omitempty" yaml:"compliance_profiles,omitempty"` // ["pci-dss-4.0", "sox"]
+	EnableAlerts bool                   `json:"enable_alerts" yaml:"enable_alerts"`
+	AlertRules   []NativeAgentAlertRule `json:"alert_rules,omitempty" yaml:"alert_rules,omitempty"`
 }
 
 // NativeAgentAlertRule represents an alert rule configuration from alertkick-ui

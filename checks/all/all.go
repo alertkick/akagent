@@ -3,7 +3,6 @@
 package all
 
 import (
-	_ "akagent/checks/auth"
 	_ "akagent/checks/cpu"
 	_ "akagent/checks/disk_usage"
 	_ "akagent/checks/dns"

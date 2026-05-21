@@ -101,14 +101,10 @@ type NativeConfig struct {
 
 	// ---- Alert Filtering ----
 
-	// AlertFilter controls semantic event filtering to reduce noise
-	// Only events matching alert rules are emitted
+	// AlertFilter controls the noise filter that drops obviously
+	// uninteresting events at the source. Classification and rule
+	// evaluation happen at the endpoint, not here.
 	AlertFilter AlertFilterConfig `yaml:"alert_filter"`
-
-	// ---- Compliance Profiles ----
-	// ComplianceProfiles stores the list of enabled compliance profiles (e.g., ["sox", "pci-dss-4.0"])
-	// This is metadata synced from the API for display purposes - actual compliance logic is in apapi
-	ComplianceProfiles []string `yaml:"compliance_profiles,omitempty"`
 
 	// ---- Rate Limiting ----
 
@@ -121,17 +117,13 @@ type NativeConfig struct {
 	NativeLists NativeListConfig `yaml:"native_lists"`
 }
 
-// AlertFilterConfig controls semantic alert filtering
-// This determines which events are actually emitted vs dropped as noise
+// AlertFilterConfig controls the agent's noise filter. The filter drops
+// events that match configured exclusion sets (comm names, file path
+// prefixes) before they leave the host. All classification and rule
+// evaluation is the endpoint's responsibility.
 type AlertFilterConfig struct {
-	// Enabled controls whether alert filtering is active
-	// When false, all events passing basic filters are emitted
+	// Enabled toggles the noise filter. When false, all events pass.
 	Enabled bool `yaml:"enabled"`
-
-	// ComplianceMode enables full auditing for SOX/PCI/HIPAA compliance
-	// When false: only critical security events (SSH, priv esc, kernel modules)
-	// When true: all security-relevant events including file access, ports, packages
-	ComplianceMode bool `yaml:"compliance_mode"`
 }
 
 // TracepointConfig allows fine-grained control over which tracepoints are enabled
@@ -274,10 +266,9 @@ func DefaultNativeConfig() NativeConfig {
 		EnableEnrichment:          true,
 		EnrichmentCacheTTLSeconds: 30,
 
-		// Alert filtering enabled by default (reduces noise significantly)
+		// Noise filter enabled by default (drops obvious system noise at the source).
 		AlertFilter: AlertFilterConfig{
-			Enabled:        true,
-			ComplianceMode: false, // Default to critical events only
+			Enabled: true,
 		},
 
 		// Rate limiting: prevent noisy rules from drowning critical alerts

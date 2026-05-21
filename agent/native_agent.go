@@ -216,9 +216,6 @@ func convertWebConfigToNative(webConfig client.NativeAgentConfig) ebpf.NativeCon
 		config.EnrichmentCacheTTLSeconds = webConfig.EnrichmentCacheTTLSeconds
 	}
 
-	// Compliance profiles (stored for display/sync purposes, actual logic in apapi)
-	config.ComplianceProfiles = webConfig.ComplianceProfiles
-
 	return config
 }
 
@@ -265,7 +262,6 @@ func convertNativeConfigToWeb(config ebpf.NativeConfig) client.NativeAgentConfig
 		EnableNamespace:           config.EnableNamespace,
 		EnableEnrichment:          config.EnableEnrichment,
 		EnrichmentCacheTTLSeconds: config.EnrichmentCacheTTLSeconds,
-		ComplianceProfiles:        config.ComplianceProfiles,
 	}
 
 	return webConfig

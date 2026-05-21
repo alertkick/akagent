@@ -42,7 +42,6 @@ const (
 	SectionHeartbeat  = "heartbeat"
 	SectionMetrics    = "metrics"
 	SectionSecurity   = "security"
-	SectionAuth       = "auth"
 	SectionProtocol   = "protocol"
 	SectionEBPF       = "ebpf"
 )
