@@ -190,6 +190,9 @@ func (a *agent) HandleServerRequest(req client.Request) error {
 	case "agent.refresh_checks":
 		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_checks request")
 		a.handleRefreshChecksRequest(req)
+	case "agent.restart":
+		a.log.Info().Msg("agent.HandleServerRequest - received restart request")
+		a.handleAgentRestartRequest(req)
 	case "host_info_types.get":
 		a.log.Debug().Msg("agent.HandleServerRequest - received host_info_types.get request")
 	default:
@@ -295,6 +298,45 @@ func (a *agent) handleRefreshChecksRequest(req client.Request) {
 		a.log.Err(err).Msg("agent.handleRefreshChecksRequest - error during `refresh_checks` submit")
 		return
 	}
+}
+
+// handleAgentRestartRequest acks the restart command and then exits the
+// process so systemd's Restart=always brings it back up. The 500ms sleep
+// before exit gives the websocket frame time to flush — without it the API
+// sees the command stuck in "pending" because the connection drops mid-write.
+//
+// Non-systemd installs (dev/macOS/Windows) won't auto-recover; documented as
+// a known limitation.
+func (a *agent) handleAgentRestartRequest(req client.Request) {
+	a.log.Info().Msg("agent.handleAgentRestartRequest - acking restart, will exit shortly")
+
+	response := client.GeneralCommandResponse{
+		Message: "Agent restarting",
+		Status:  "success",
+		Error:   "",
+	}
+
+	msg := client.Response{
+		Version:   "1",
+		ID:        req.ID,
+		Target:    "agent.restart",
+		Source:    a.AgentID,
+		Tenant:    a.Subdomain,
+		Subdomain: a.Subdomain,
+		Result:    json.RawMessage(response.String()),
+	}
+
+	if err := a.conn.SendJSONMessageNoResponse(msg); err != nil {
+		// Log but proceed with the exit — the operator asked for a restart
+		// and we shouldn't refuse just because the ack didn't make it through.
+		a.log.Err(err).Msg("agent.handleAgentRestartRequest - ack send failed; restarting anyway")
+	}
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		a.log.Info().Msg("agent.handleAgentRestartRequest - exiting for systemd restart")
+		os.Exit(0)
+	}()
 }
 
 func (a *agent) CheckScheduleGet() error {
