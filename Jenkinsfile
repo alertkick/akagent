@@ -2,8 +2,11 @@ pipeline {
     agent any
 
     environment {
-        BUILD_IMAGE = 'akagent-build'
-        BUILD_CONTAINER = 'akagent-builder'
+        // Scope image and container names per-branch + per-build so concurrent
+        // develop/main/PR builds don't collide on the host's Docker daemon.
+        // disableConcurrentBuilds() below already prevents same-branch overlap.
+        BUILD_IMAGE = "akagent-build-${env.BRANCH_NAME}"
+        BUILD_CONTAINER = "akagent-builder-${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
     }
 
     options {
