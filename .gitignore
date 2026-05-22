@@ -11,9 +11,10 @@ third_party_licenses/
 *.rpm
 *.msi
 
-# Compiled binaries
-main
-alertkick-agent
+# Compiled binaries (anchored to repo root so the same names under
+# packaging/ — which are sysv init scripts, not Go binaries — stay tracked)
+/main
+/alertkick-agent
 
 # Demo/test data
 demo-security-events/
@@ -35,10 +36,12 @@ vendor/
 *~
 .DS_Store
 
-# Configuration files with credentials
+# Configuration files with credentials at runtime
 *.conf
-alertkick-agent.conf
-alertkick-agent.conf
+# Packaging templates carry the same extension but ship with the agent —
+# they are NOT credentials and must be tracked for goreleaser to build
+# the deb/rpm packages.
+!packaging/**/*.conf
 
 # Runtime generated files
 machine-id

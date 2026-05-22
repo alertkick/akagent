@@ -1,0 +1,47 @@
+#!/bin/sh
+#
+# chkconfig: 345 85 15     - start or stop process definition within the boot process
+# description: AlertKick monitoring agent
+# processname: alertkick-agent
+# pidfile: /var/run/alertkick-agent.pid
+
+NAME=alertkick-agent
+DAEMON=/usr/bin/alertkick-agent
+PIDFILE=/var/run/alertkick-agent.pid
+LOG=/var/log/alertkick-agent.log
+export TMPDIR=/var/lib
+
+# Source function library.      This creates the operating environment for the process to be started
+. /etc/init.d/functions
+
+case "$1" in
+  start)
+        echo -n "Starting $DAEMON: "
+        daemon $DAEMON -D -p $PIDFILE -l $LOG
+        echo
+        touch /var/lock/subsys/process-name
+        ;;
+  stop)
+        echo -n "Shutting down $DAEMON: "
+        killproc $DAEMON
+        echo
+        rm -f $PIDFILE
+        ;;
+  status)
+        status $DAEMON
+        ;;
+  restart)
+        $0 stop
+        $0 start
+        ;;
+  reload)
+        echo -n "Reloading $DAEMON: "
+        killproc $DAEMON -HUP
+        echo
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart|reload|status}"
+        exit 1
+esac
+
+exit 0
