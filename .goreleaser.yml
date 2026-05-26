@@ -151,3 +151,19 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^ci:"
+
+# GitHub Releases publishing. Goreleaser autodetects the repo from the
+# git remote (alertkick/akagent). Requires GITHUB_TOKEN at build time
+# with public_repo scope. Snapshot builds (--snapshot, no tag) skip the
+# release step entirely so develop builds don't try to publish.
+release:
+  github:
+    owner: alertkick
+    name: akagent
+  name_template: "{{ .Tag }}"
+  # auto = tags like v1.7.0-rc.1 land as prereleases; bare semver tags
+  # land as full releases.
+  prerelease: auto
+  # replace = re-running Jenkins on the same tag overwrites the release
+  # body and re-uploads assets instead of failing with "release exists".
+  mode: replace
