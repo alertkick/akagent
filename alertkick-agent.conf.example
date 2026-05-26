@@ -1,0 +1,11 @@
+{
+  "Debug": false,
+  "AgentToken": "YOUR_AGENT_TOKEN_HERE",
+  "AgentID": "YOUR_AGENT_ID_HERE",
+  "AgentName": "my-server",
+  "Subdomain": "YOUR_SUBDOMAIN_HERE",
+  "Endpoint": "monit.alertkick.com:8484",
+  "TLSInsecure": false,
+  "TLSCAFilePath": ""
+}
+

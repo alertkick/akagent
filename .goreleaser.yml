@@ -1,0 +1,153 @@
+version: 2
+
+project_name: alertkick-agent
+
+before:
+  hooks:
+    - go mod tidy -v
+    - git checkout -- go.mod go.sum
+
+builds:
+  - id: linux
+    main: ./cmd
+    binary: alertkick-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{.Version}} -X apagent/ebpf.agentVersion={{.Version}}
+    flags:
+      - -buildvcs=false
+
+  - id: windows
+    main: ./cmd
+    binary: alertkick-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    goarch:
+      - amd64
+    ldflags:
+      - -s -w -X main.Version={{.Version}}
+    tags:
+      - noebpf
+    flags:
+      - -buildvcs=false
+
+archives:
+  - id: linux-archive
+    builds:
+      - linux
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+  - id: windows-archive
+    builds:
+      - windows
+    format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+nfpms:
+  - id: deb
+    builds:
+      - linux
+    package_name: alertkick-agent
+    vendor: AlertKick
+    homepage: https://alertkick.com
+    maintainer: AlertKick <support@alertkick.com>
+    description: AlertKick monitoring and security agent
+    license: Proprietary
+    formats:
+      - deb
+    bindir: /usr/bin
+    contents:
+      - src: packaging/linux/systemd/alertkick-agent.service
+        dst: /lib/systemd/system/alertkick-agent.service
+      - src: packaging/linux/sysv-debian/alertkick-agent
+        dst: /etc/init.d/alertkick-agent
+        file_info:
+          mode: 0755
+      - src: packaging/linux/logrotate/alertkick-agent
+        dst: /etc/logrotate.d/alertkick-agent
+      - src: packaging/linux/conf/alertkick-agent.conf
+        dst: /etc/alertkick-agent/alertkick-agent.conf
+        type: config|noreplace
+      - src: agent/scripts/updater.sh
+        dst: /usr/local/bin/alertkick-agent-updater.sh
+        file_info:
+          mode: 0755
+      - dst: /var/lib/alertkick-agent
+        type: dir
+      - dst: /etc/alertkick-agent
+        type: dir
+      - dst: /usr/lib/alertkick-agent/plugins
+        type: dir
+      - src: LICENSE.txt
+        dst: /usr/share/doc/alertkick-agent/LICENSE.txt
+      - src: THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/alertkick-agent/THIRD_PARTY_NOTICES.md
+    scripts:
+      postinstall: packaging/scripts/deb-postinst.sh
+      preremove: packaging/scripts/deb-prerm.sh
+      postremove: packaging/scripts/deb-postrm.sh
+
+  - id: rpm
+    builds:
+      - linux
+    package_name: alertkick-agent
+    vendor: AlertKick
+    homepage: https://alertkick.com
+    maintainer: AlertKick <support@alertkick.com>
+    description: AlertKick monitoring and security agent
+    license: Proprietary
+    formats:
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: packaging/linux/systemd/alertkick-agent.service
+        dst: /lib/systemd/system/alertkick-agent.service
+      - src: packaging/linux/sysv-redhat/alertkick-agent
+        dst: /etc/init.d/alertkick-agent
+        file_info:
+          mode: 0755
+      - src: packaging/linux/logrotate/alertkick-agent
+        dst: /etc/logrotate.d/alertkick-agent
+      - src: packaging/linux/conf/alertkick-agent.conf
+        dst: /etc/alertkick-agent/alertkick-agent.conf
+        type: config|noreplace
+      - src: agent/scripts/updater.sh
+        dst: /usr/local/bin/alertkick-agent-updater.sh
+        file_info:
+          mode: 0755
+      - dst: /var/lib/alertkick-agent
+        type: dir
+      - dst: /etc/alertkick-agent
+        type: dir
+      - dst: /usr/lib/alertkick-agent/plugins
+        type: dir
+      - src: LICENSE.txt
+        dst: /usr/share/doc/alertkick-agent/LICENSE.txt
+      - src: THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/alertkick-agent/THIRD_PARTY_NOTICES.md
+    scripts:
+      postinstall: packaging/scripts/rpm-postinst.sh
+      preremove: packaging/scripts/rpm-preun.sh
+    rpm:
+      group: System Environment/Daemons
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"

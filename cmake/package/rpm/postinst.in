@@ -1,0 +1,20 @@
+# This adds the proper /etc/rc*.d links for the script
+[ -x /sbin/chkconfig ] && /sbin/chkconfig --add @APP_NAME@
+
+mkdir -p /var/lib/@APP_NAME@
+mkdir -p /usr/lib/@APP_NAME@/plugins
+mkdir -p /etc/@APP_NAME@/
+
+# Restart agent on upgrade
+if [ "$1" = "2" ] ; then
+    if [ -x "/bin/systemctl" ] ; then
+      /bin/systemctl reload @APP_NAME@.service >/dev/null 2>&1 || true
+      /bin/systemctl enable @APP_NAME@.service >/dev/null 2>&1 || true
+      if [ -f "/etc/@APP_NAME@/@APP_NAME@-agent.conf" ] ; then
+        /bin/systemctl restart @APP_NAME@.service >/dev/null 2>&1 || true
+      fi
+    else
+      /sbin/service @APP_NAME@ stop  >/dev/null 2>&1 || :
+      /sbin/service @APP_NAME@ start >/dev/null 2>&1 || :
+    fi
+fi
