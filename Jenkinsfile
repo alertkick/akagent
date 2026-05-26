@@ -56,13 +56,17 @@ CGO_ENABLED=1 go test -race ./...
 
 echo "=== Build & Package ==="
 rm -f ci-build.sh
-# Tag builds: goreleaser builds AND publishes a GitHub Release. The
-# release: section in .goreleaser.yml points at alertkick/akagent and
-# uses GITHUB_TOKEN (passed in via -e on docker create, sourced from
-# the github-token-akagent Jenkins credential).
+# Publish only on Jenkins tag builds. Branch builds (main, develop)
+# would otherwise pass `git describe --exact-match` whenever the branch
+# tip happens to be at a tagged commit, race against the tag build, and
+# corrupt the GitHub Release (see v1.7.0 incident). IS_TAG_BUILD is set
+# by the Jenkinsfile from Jenkins' env.TAG_NAME and is the only signal
+# that distinguishes "this run was triggered by a tag" from "this run
+# is on a branch that happens to point at a tag".
 #
-# Non-tag builds: --snapshot only, no publish, no token needed.
-if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+# release: section in .goreleaser.yml + GITHUB_TOKEN (from credential
+# github-token-akagent) handle the publish itself.
+if [ "${IS_TAG_BUILD:-0}" = "1" ]; then
     goreleaser release --clean
 else
     goreleaser release --clean --snapshot
@@ -83,13 +87,21 @@ echo "=== Dist Contents ==="
 ls -lh dist/
 '''
                 sh 'chmod +x ci-build.sh'
-                // GITHUB_TOKEN is empty for non-tag builds; goreleaser
-                // only consults it during the publish step, which is
-                // gated on --snapshot anyway. Loading the credential on
-                // every build keeps the Docker create line uniform.
+                script {
+                    // env.TAG_NAME is set by the Jenkins multibranch
+                    // plugin only when this run was triggered by a tag.
+                    // Use it as the publish gate so branch builds (main,
+                    // develop) never race against the tag build for the
+                    // same GitHub Release.
+                    env.IS_TAG_BUILD = env.TAG_NAME ? '1' : '0'
+                }
+                // GITHUB_TOKEN is only consulted by the publish step,
+                // which is now gated by IS_TAG_BUILD. Loading the
+                // credential on every build keeps the docker create
+                // line uniform.
                 withCredentials([string(credentialsId: 'github-token-akagent', variable: 'GITHUB_TOKEN')]) {
                     sh 'docker rm -f ${BUILD_CONTAINER} 2>/dev/null || true'
-                    sh 'docker create --name ${BUILD_CONTAINER} -w /build -e GITHUB_TOKEN=${GITHUB_TOKEN} ${BUILD_IMAGE} /build/ci-build.sh'
+                    sh 'docker create --name ${BUILD_CONTAINER} -w /build -e GITHUB_TOKEN=${GITHUB_TOKEN} -e IS_TAG_BUILD=${IS_TAG_BUILD} ${BUILD_IMAGE} /build/ci-build.sh'
                     sh 'docker cp ${WORKSPACE}/. ${BUILD_CONTAINER}:/build/'
                     sh 'docker start -a ${BUILD_CONTAINER}'
                     sh 'docker cp ${BUILD_CONTAINER}:/build/dist/. ${WORKSPACE}/dist/'
