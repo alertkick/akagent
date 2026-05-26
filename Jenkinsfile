@@ -56,14 +56,21 @@ CGO_ENABLED=1 go test -race ./...
 
 echo "=== Build & Package ==="
 rm -f ci-build.sh
-# Use --snapshot for non-tagged commits (e.g. develop branch)
+# Tag builds: goreleaser builds AND publishes a GitHub Release. The
+# release: section in .goreleaser.yml points at alertkick/akagent and
+# uses GITHUB_TOKEN (passed in via -e on docker create, sourced from
+# the github-token-akagent Jenkins credential).
+#
+# Non-tag builds: --snapshot only, no publish, no token needed.
 if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
-    goreleaser release --clean --skip=publish
+    goreleaser release --clean
 else
     goreleaser release --clean --snapshot
 fi
 
 echo "=== Generate Per-Package Checksums ==="
+# Used by the S3 + fleet-registration step downstream; GitHub Release
+# gets goreleaser's standard checksums.txt instead.
 cd dist
 for f in *.deb *.rpm *.tar.gz *.zip; do
     [ -f "$f" ] || continue
@@ -76,12 +83,18 @@ echo "=== Dist Contents ==="
 ls -lh dist/
 '''
                 sh 'chmod +x ci-build.sh'
-                sh 'docker rm -f ${BUILD_CONTAINER} 2>/dev/null || true'
-                sh 'docker create --name ${BUILD_CONTAINER} -w /build ${BUILD_IMAGE} /build/ci-build.sh'
-                sh 'docker cp ${WORKSPACE}/. ${BUILD_CONTAINER}:/build/'
-                sh 'docker start -a ${BUILD_CONTAINER}'
-                sh 'docker cp ${BUILD_CONTAINER}:/build/dist/. ${WORKSPACE}/dist/'
-                sh 'docker rm ${BUILD_CONTAINER}'
+                // GITHUB_TOKEN is empty for non-tag builds; goreleaser
+                // only consults it during the publish step, which is
+                // gated on --snapshot anyway. Loading the credential on
+                // every build keeps the Docker create line uniform.
+                withCredentials([string(credentialsId: 'github-token-akagent', variable: 'GITHUB_TOKEN')]) {
+                    sh 'docker rm -f ${BUILD_CONTAINER} 2>/dev/null || true'
+                    sh 'docker create --name ${BUILD_CONTAINER} -w /build -e GITHUB_TOKEN=${GITHUB_TOKEN} ${BUILD_IMAGE} /build/ci-build.sh'
+                    sh 'docker cp ${WORKSPACE}/. ${BUILD_CONTAINER}:/build/'
+                    sh 'docker start -a ${BUILD_CONTAINER}'
+                    sh 'docker cp ${BUILD_CONTAINER}:/build/dist/. ${WORKSPACE}/dist/'
+                    sh 'docker rm ${BUILD_CONTAINER}'
+                }
             }
         }
 
