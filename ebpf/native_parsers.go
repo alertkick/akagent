@@ -55,6 +55,19 @@ func (a *NativeEBPFAgent) parseExecveEvent(data []byte) (SecurityEvent, error) {
 	filename := int8ArrayToString(bpfEvent.Filename[:])
 	args := int8ArrayToString(bpfEvent.Args[:])
 
+	procInfo := ProcessInfo{
+		PID:     int(bpfEvent.Pid),
+		PPID:    int(bpfEvent.Ppid),
+		Name:    comm,
+		ExePath: filename,
+		Cmdline: args,
+		UID:     int(bpfEvent.Uid),
+	}
+	// Match the other parsers — fill parent_name/parent_exe/username/cwd
+	// from /proc so downstream consumers (SSH login hydration, the endpoint
+	// rule evaluator) don't have to re-walk the parent chain themselves.
+	EnrichProcessInfo(&procInfo)
+
 	event := SecurityEvent{
 		UUID:      xid.New().String(),
 		AgentType: AgentTypeNative,
@@ -65,14 +78,7 @@ func (a *NativeEBPFAgent) parseExecveEvent(data []byte) (SecurityEvent, error) {
 		Category:  "process",
 		Output:    fmt.Sprintf("Process %s executed: %s %s", comm, filename, args),
 		Tags:      []string{"process", "execve"},
-		Process: ProcessInfo{
-			PID:     int(bpfEvent.Pid),
-			PPID:    int(bpfEvent.Ppid),
-			Name:    comm,
-			ExePath: filename,
-			Cmdline: args,
-			UID:     int(bpfEvent.Uid),
-		},
+		Process:   procInfo,
 		RawFields: map[string]interface{}{
 			"timestamp_ns": bpfEvent.TimestampNs,
 			"gid":          bpfEvent.Gid,

@@ -67,6 +67,12 @@ test/cover:
 ## bpf/generate: generate eBPF Go bindings from BPF C code
 .PHONY: bpf/generate
 bpf/generate:
+	# Remove placeholder bindings before bpf2go runs — both files would
+	# otherwise define the same symbols and the build would error with
+	# "redeclared in this block". Placeholders exist so the agent module
+	# compiles on hosts that haven't yet run bpf2go.
+	rm -f ebpf/bpfgen/sshlockdown_placeholder.go
+	rm -f ebpf/bpfgen/sshlockdowntc_placeholder.go
 	cd ebpf/bpfgen && go generate ./...
 
 ## build: build the application

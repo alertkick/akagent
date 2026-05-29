@@ -120,6 +120,11 @@ type NativeEBPFAgent struct {
 	alertFilter   *AlertFilter
 	rateLimiter   *RateLimiter
 	enricher      *EventEnricher
+	sshHydrator   *SSHHydrator
+	sshdConfig    *SSHDConfigReader
+	// sshdConfigCallbacks fire after each successful Refresh. Held
+	// behind mu so callers can register/unregister from any goroutine.
+	sshdConfigCallbacks []func(*SSHDConfig)
 	eventChan     chan SecurityEvent
 	running       bool
 	listening     bool
@@ -213,6 +218,36 @@ type NativeEBPFAgent struct {
 	readerWg sync.WaitGroup
 }
 
+// SSHDConfigSnapshot returns the current sshd_config snapshot from the
+// agent's reader, or nil if the reader hasn't refreshed yet. Used by
+// the SSH lockdown initialiser to seed the LSM BPF map with the host's
+// listening ports.
+func (a *NativeEBPFAgent) SSHDConfigSnapshot() *SSHDConfig {
+	if a.sshdConfig == nil {
+		return nil
+	}
+	return a.sshdConfig.Snapshot()
+}
+
+// OnSSHDConfigRefresh registers a callback fired after each successful
+// sshd_config refresh. The lockdown initialiser registers a callback
+// here so the LSM blocker's port-set map tracks sshd Port directive
+// changes without an agent restart.
+func (a *NativeEBPFAgent) OnSSHDConfigRefresh(cb func(*SSHDConfig)) {
+	a.mu.Lock()
+	a.sshdConfigCallbacks = append(a.sshdConfigCallbacks, cb)
+	a.mu.Unlock()
+}
+
+func (a *NativeEBPFAgent) fireSSHDConfigCallbacks(snap *SSHDConfig) {
+	a.mu.RLock()
+	cbs := append([]func(*SSHDConfig){}, a.sshdConfigCallbacks...)
+	a.mu.RUnlock()
+	for _, cb := range cbs {
+		cb(snap)
+	}
+}
+
 // NewNativeAgent creates a new native eBPF agent instance
 func NewNativeAgent() (*NativeEBPFAgent, error) {
 	return NewNativeAgentWithConfig(DefaultConfigPath)
@@ -248,6 +283,8 @@ func NewNativeAgentWithConfig(configPath string) (*NativeEBPFAgent, error) {
 		alertFilter:   NewAlertFilterWithLists(&config.AlertFilter, &config.NativeLists),
 		rateLimiter:   NewRateLimiter(config.RateLimiter),
 		enricher:      enricher,
+		sshHydrator:   NewSSHHydrator(),
+		sshdConfig:    NewSSHDConfigReader(),
 		eventChan:     make(chan SecurityEvent, eventChannelBufferSize),
 		shutdownChan:  make(chan struct{}),
 		kernelSupport: support,

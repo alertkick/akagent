@@ -73,3 +73,15 @@ package bpfgen
 
 // Process cache for userspace enrichment (always loaded)
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -target bpfel,bpfeb -type process_info -type enriched_event Processcache ../bpf/process_cache.bpf.c -- -I../bpf -Wall -Werror
+
+// SSH lockdown LSM blocker. No event type — the program is enforcement-
+// only, not telemetry. Loaded conditionally (only on kernels with
+// CONFIG_BPF_LSM=y and lsm=bpf in cmdline); see sshlockdown/capability.go
+// for the runtime probe.
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -target bpfel,bpfeb Sshlockdown ../bpf/ssh_lockdown.bpf.c -- -I../bpf -Wall -Werror
+
+// SSH lockdown TC fallback. Attaches as a clsact ingress filter when
+// the LSM path isn't available. Has its own map set (parallel naming
+// with "tc" prefix) so both programs can coexist without state stomping
+// during testing.
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -target bpfel,bpfeb Sshlockdowntc ../bpf/ssh_lockdown_tc.bpf.c -- -I../bpf -Wall -Werror
