@@ -3,6 +3,8 @@
 package agent
 
 import (
+	"akagent/agent/sshlockdown"
+	"akagent/agent/sshlockdown/bpflsm"
 	"akagent/client"
 	"akagent/ebpf"
 	"context"
@@ -15,6 +17,31 @@ type platformAgentData struct {
 	securityEventQueue        []ebpf.SecurityEvent
 	securityEventQueueMutex   sync.Mutex
 	securityEventMaxQueueSize int
+
+	// lockdownManager owns the SSH lockdown / maintenance window state.
+	// nil until initSSHLockdown runs; nil-safe in the request handlers.
+	lockdownManager *sshlockdown.Manager
+
+	// lockdownLSM is the concrete LSM-BPF blocker handle when that path
+	// is active. The manager talks to the Blocker interface; we hold a
+	// typed handle separately so the agent can call Stats() and inspect
+	// kernel-side counters without going through Manager. Nil when the
+	// host is on the TC or noop fallback.
+	lockdownLSM *bpflsm.Blocker
+
+	// lockdownPortsSetter abstracts SetPorts across LSM and TC blockers
+	// so the sshd_config refresh callback works regardless of which
+	// kernel path is active. Nil only when the NoopBlocker is selected.
+	lockdownPortsSetter interface {
+		SetPorts(ports []uint16) error
+	}
+
+	// lockdownBlockerMechanism + lockdownBlockerReason surface which
+	// blocker is active and why. Echoed in the lockdown.get_state
+	// response so the UI can tell the operator whether kernel-side
+	// enforcement is actually in effect.
+	lockdownBlockerMechanism string // "lsm-bpf" | "noop"
+	lockdownBlockerReason    string
 }
 
 func newPlatformAgentData() platformAgentData {
@@ -34,6 +61,14 @@ func (a *agent) initEBPF(ctx context.Context) {
 	}
 
 	a.platformData.nativeAgent = nativeAgent
+
+	// Start the SSH lockdown manager regardless of whether the native
+	// eBPF agent is enabled — the lockdown state machine is independent
+	// of the event-collection pipeline. (Once the LSM Blocker ships,
+	// it'll require eBPF support; until then NoopBlocker has no kernel
+	// dependency.)
+	a.initSSHLockdown(ctx)
+
 	// Only start if explicitly enabled in config (rare - usually profile triggers it)
 	nativeConfig := a.platformData.nativeAgent.GetNativeConfig()
 	if nativeConfig.Enabled {
@@ -76,6 +111,15 @@ func (a *agent) onSystemInfo(req client.Request) {
 // handleEBPFRequest dispatches eBPF-specific server requests on Linux.
 // Returns true if the method was handled.
 func (a *agent) handleEBPFRequest(req client.Request) bool {
+	// Any server-pushed request counts as a heartbeat for the lockdown
+	// dead-man timer. Doing it here (rather than only on a dedicated
+	// heartbeat method) means a quiet host that only gets the occasional
+	// config push still keeps the lockdown active — the dead-man only
+	// fires when the control plane is genuinely unreachable.
+	if a.platformData.lockdownManager != nil {
+		a.platformData.lockdownManager.Heartbeat()
+	}
+
 	switch req.Method {
 	case "native_config.get":
 		a.log.Debug().Msg("agent.HandleServerRequest - received native_config.get request")
@@ -106,6 +150,18 @@ func (a *agent) handleEBPFRequest(req client.Request) bool {
 	case "update_agent":
 		a.log.Info().Msg("agent.HandleServerRequest - received update_agent request")
 		go a.handleUpdateAgentRequest(req)
+	case "ssh_lockdown.get_state":
+		a.log.Debug().Msg("agent.HandleServerRequest - received ssh_lockdown.get_state request")
+		a.handleSSHLockdownGetStateRequest(req)
+	case "ssh_lockdown.set":
+		a.log.Info().Msg("agent.HandleServerRequest - received ssh_lockdown.set request")
+		a.handleSSHLockdownSetRequest(req)
+	case "ssh_lockdown.unlock":
+		a.log.Info().Msg("agent.HandleServerRequest - received ssh_lockdown.unlock request")
+		a.handleSSHLockdownUnlockRequest(req)
+	case "ssh_lockdown.lock_now":
+		a.log.Info().Msg("agent.HandleServerRequest - received ssh_lockdown.lock_now request")
+		a.handleSSHLockdownLockNowRequest(req)
 	default:
 		return false
 	}

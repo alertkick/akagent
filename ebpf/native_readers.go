@@ -388,6 +388,18 @@ func (a *NativeEBPFAgent) StartEventListener(ctx context.Context) error {
 	// Start cache cleanup goroutine
 	go a.runCacheCleanup()
 
+	// Resolve sshd's listening ports once at startup, then refresh on a
+	// long ticker so a sshd_config edit + `systemctl reload ssh` is picked
+	// up without an agent restart. Failures are non-fatal — the reader
+	// retains its last good snapshot or falls back to {22}.
+	if a.sshdConfig != nil {
+		if snap, err := a.sshdConfig.Refresh(); err == nil && snap != nil {
+			a.fireSSHDConfigCallbacks(snap)
+		}
+		a.readerWg.Add(1)
+		go a.runSSHDConfigRefresh()
+	}
+
 	// Start process cache cleanup goroutine
 	if a.processCache != nil {
 		a.readerWg.Add(1)
@@ -541,6 +553,36 @@ func (a *NativeEBPFAgent) sendEvent(event SecurityEvent) {
 	// Enrich with container and namespace info
 	a.enricher.Enrich(&event)
 
+	// Stamp SSH source IP when the event is a shell process spawned by
+	// sshd. Quietly no-ops for everything else, so calling unconditionally
+	// is fine.
+	if a.sshHydrator != nil {
+		a.sshHydrator.HydrateSSHLogin(&event)
+	}
+
+	// For network events, stamp is_ssh_port=true when src/dst port matches
+	// any port sshd is listening on. Endpoint matchers consult this flag
+	// instead of literal 22, so a non-default SSHD Port (2222, 2200, etc.)
+	// is correctly classified as SSH traffic.
+	if a.sshdConfig != nil && event.Category == "network" {
+		snap := a.sshdConfig.Snapshot()
+		dport, hasDPort := lookupRawPort(event.RawFields, "dport")
+		sport, hasSPort := lookupRawPort(event.RawFields, "sport")
+		isSSH := false
+		if hasDPort && snap.HasPort(int(dport)) {
+			isSSH = true
+		}
+		if hasSPort && snap.HasPort(int(sport)) {
+			isSSH = true
+		}
+		if isSSH {
+			if event.RawFields == nil {
+				event.RawFields = make(map[string]interface{})
+			}
+			event.RawFields["is_ssh_port"] = true
+		}
+	}
+
 	// Send event to channel (non-blocking)
 	// Note: All alert rules, compliance logic, and priority elevation
 	// is handled by apapi after receiving the event
@@ -588,6 +630,64 @@ func (a *NativeEBPFAgent) runCacheCleanup() {
 			if logger.IsSectionEnabled(logger.SectionEBPF) {
 				containers, namespaces := a.enricher.CacheSize()
 				nativeLog.Debug().Int("containers", containers).Int("namespaces", namespaces).Msg("Cleaned enrichment cache")
+			}
+		}
+	}
+}
+
+// lookupRawPort coerces the raw_fields port representation into a
+// uint16. eBPF parsers stuff ports in as int32/uint16/etc. depending on
+// the syscall; this helper covers every shape the agent emits.
+func lookupRawPort(fields map[string]interface{}, key string) (uint16, bool) {
+	v, ok := fields[key]
+	if !ok {
+		return 0, false
+	}
+	switch p := v.(type) {
+	case uint16:
+		return p, true
+	case int:
+		return uint16(p), true
+	case int32:
+		return uint16(p), true
+	case int64:
+		return uint16(p), true
+	case uint32:
+		return uint16(p), true
+	case uint64:
+		return uint16(p), true
+	case float64:
+		return uint16(p), true
+	}
+	return 0, false
+}
+
+// runSSHDConfigRefresh re-parses sshd_config on a ticker so a Port edit
+// followed by sshd reload is picked up by the agent without restart. The
+// refresh interval is long (5 min) because sshd_config changes are rare
+// and parsing is cheap when nothing changed.
+func (a *NativeEBPFAgent) runSSHDConfigRefresh() {
+	defer a.readerWg.Done()
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-a.shutdownChan:
+			return
+		case <-ticker.C:
+			snap, err := a.sshdConfig.Refresh()
+			if err != nil {
+				if logger.IsSectionEnabled(logger.SectionEBPF) {
+					nativeLog.Debug().Err(err).Msg("sshd_config refresh failed; retaining last snapshot")
+				}
+				continue
+			}
+			if snap != nil {
+				if logger.IsSectionEnabled(logger.SectionEBPF) {
+					nativeLog.Debug().Ints("ports", snap.Ports).Msg("sshd_config refreshed")
+				}
+				a.fireSSHDConfigCallbacks(snap)
 			}
 		}
 	}

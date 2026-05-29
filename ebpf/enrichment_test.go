@@ -3,6 +3,7 @@
 package ebpf
 
 import (
+	"context"
 	"testing"
 )
 
@@ -67,5 +68,93 @@ func TestLookupDockerContainerName_TrimSlash(t *testing.T) {
 	trimmed := name[1:] // simulate strings.TrimPrefix(name, "/")
 	if trimmed != "alertkick-web" {
 		t.Errorf("expected 'alertkick-web', got %q", trimmed)
+	}
+}
+
+func TestResolveContainerName_CLIFallbackAndCache(t *testing.T) {
+	e := NewEventEnricher()
+	// Filesystem lookup will miss in the test env, so CLI fallback runs.
+	var dockerCalls int
+	e.dockerCLIName = func(_ context.Context, id string) string {
+		dockerCalls++
+		if id != "deadbeef000000000000000000000000000000000000000000000000deadbeef" {
+			t.Errorf("unexpected id passed to docker CLI: %s", id)
+		}
+		return "alertkick-ui"
+	}
+	e.podmanCLIName = func(_ context.Context, _ string) string { return "" }
+	e.crictlCLIName = func(_ context.Context, _ string) string { return "" }
+
+	id := "deadbeef000000000000000000000000000000000000000000000000deadbeef"
+
+	if got := e.resolveContainerName(id, "docker"); got != "alertkick-ui" {
+		t.Fatalf("resolveContainerName = %q, want alertkick-ui", got)
+	}
+	if dockerCalls != 1 {
+		t.Fatalf("dockerCalls = %d, want 1", dockerCalls)
+	}
+
+	// Second call should be served from the per-ID cache — no extra shell-out.
+	if got := e.resolveContainerName(id, "docker"); got != "alertkick-ui" {
+		t.Fatalf("cached resolveContainerName = %q, want alertkick-ui", got)
+	}
+	if dockerCalls != 1 {
+		t.Fatalf("dockerCalls after cache hit = %d, want 1", dockerCalls)
+	}
+}
+
+func TestResolveContainerName_NegativeCache(t *testing.T) {
+	e := NewEventEnricher()
+	calls := 0
+	e.dockerCLIName = func(_ context.Context, _ string) string {
+		calls++
+		return ""
+	}
+	e.podmanCLIName = func(_ context.Context, _ string) string { return "" }
+	e.crictlCLIName = func(_ context.Context, _ string) string { return "" }
+
+	id := "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abc1"
+	if got := e.resolveContainerName(id, "docker"); got != "" {
+		t.Fatalf("expected empty name for unknown container, got %q", got)
+	}
+	if calls != 1 {
+		t.Fatalf("docker calls = %d, want 1", calls)
+	}
+	// Second call should not re-shell — empty result is cached too.
+	_ = e.resolveContainerName(id, "docker")
+	if calls != 1 {
+		t.Fatalf("docker calls after negative cache hit = %d, want 1", calls)
+	}
+}
+
+func TestResolveContainerName_RuntimeDispatch(t *testing.T) {
+	e := NewEventEnricher()
+	var picked string
+	e.dockerCLIName = func(_ context.Context, _ string) string { picked = "docker"; return "from-docker" }
+	e.podmanCLIName = func(_ context.Context, _ string) string { picked = "podman"; return "from-podman" }
+	e.crictlCLIName = func(_ context.Context, _ string) string { picked = "crictl"; return "from-crictl" }
+
+	cases := map[string]struct {
+		runtime string
+		want    string
+		via     string
+	}{
+		"docker":     {"docker", "from-docker", "docker"},
+		"podman":     {"podman", "from-podman", "podman"},
+		"containerd": {"containerd", "from-crictl", "crictl"},
+		"crio":       {"cri-o", "from-crictl", "crictl"},
+		"k8s":        {"kubernetes", "from-crictl", "crictl"},
+	}
+	for label, c := range cases {
+		// Unique id per case so cache doesn't shadow the second runtime test.
+		id := "id-" + label + "-0000000000000000000000000000000000000000000000000000000000"
+		picked = ""
+		got := e.resolveContainerName(id, c.runtime)
+		if got != c.want {
+			t.Errorf("%s: name = %q, want %q", label, got, c.want)
+		}
+		if picked != c.via {
+			t.Errorf("%s: dispatched to %s, want %s", label, picked, c.via)
+		}
 	}
 }

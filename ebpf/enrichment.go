@@ -3,8 +3,10 @@
 package ebpf
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -22,6 +24,14 @@ type EventEnricher struct {
 	containerCacheTTL  time.Duration
 	containerCacheTime map[int]time.Time
 
+	// Cache resolved container names per container ID. A single container
+	// produces many events from many PIDs; this dedupes the CLI fallback
+	// (`docker inspect` etc.) so we shell out once per container per TTL,
+	// not once per process. Empty-string entries are negative caches so
+	// we don't re-run the CLI for containers that no runtime can name.
+	nameCache     map[string]containerNameEntry
+	nameCacheTTL  time.Duration
+
 	// Cache for namespace info
 	namespaceCache     map[int]*NamespaceInfo
 	namespaceCacheTTL  time.Duration
@@ -29,6 +39,17 @@ type EventEnricher struct {
 
 	// Enable flags
 	enabled bool
+
+	// Overridable for tests. Production paths use the real CLIs.
+	dockerCLIName  func(ctx context.Context, id string) string
+	podmanCLIName  func(ctx context.Context, id string) string
+	crictlCLIName  func(ctx context.Context, id string) string
+}
+
+// containerNameEntry caches one CLI lookup result.
+type containerNameEntry struct {
+	name     string
+	resolved time.Time
 }
 
 // ContainerCacheEntry holds container-related information for caching
@@ -76,10 +97,19 @@ func NewEventEnricherWithTTL(cacheTTL time.Duration) *EventEnricher {
 		containerCache:     make(map[int]*ContainerCacheEntry),
 		containerCacheTTL:  cacheTTL,
 		containerCacheTime: make(map[int]time.Time),
+		nameCache:          make(map[string]containerNameEntry),
+		// Container names rarely change for the lifetime of a container, so
+		// the name cache can live much longer than the per-PID cgroup
+		// cache — 10 minutes is plenty to amortise the CLI cost without
+		// surfacing stale names when a user docker-rm + recreate.
+		nameCacheTTL:       10 * time.Minute,
 		namespaceCache:     make(map[int]*NamespaceInfo),
 		namespaceCacheTTL:  cacheTTL,
 		namespaceCacheTime: make(map[int]time.Time),
 		enabled:            true,
+		dockerCLIName:      dockerInspectName,
+		podmanCLIName:      podmanInspectName,
+		crictlCLIName:      crictlInspectName,
 	}
 }
 
@@ -204,12 +234,120 @@ func (e *EventEnricher) lookupContainerInfo(pid int) *ContainerCacheEntry {
 		}
 	}
 
-	// If we found a container, try to get the name (only for Docker for now)
-	if info.ContainerID != "" && info.Runtime == "docker" {
-		info.ContainerName = e.lookupDockerContainerName(info.ContainerID)
+	// If we found a container, try to resolve its name. Filesystem lookups
+	// run first (cheap, no fork); CLI fallback runs only when those miss
+	// and is cached per container ID so we never shell out twice for the
+	// same id within nameCacheTTL.
+	if info.ContainerID != "" {
+		info.ContainerName = e.resolveContainerName(info.ContainerID, info.Runtime)
 	}
 
 	return info
+}
+
+// resolveContainerName layers four lookup strategies:
+//  1. Per-container-ID name cache (in-process, populated by previous calls).
+//  2. /var/lib/docker/containers/<id>/config.v2.json — the canonical
+//     source when the agent runs on the docker host filesystem (or with
+//     /proc/1/root bind-mounted in).
+//  3. /var/lib/docker/containers/<id>/hostname — useful when config.v2.json
+//     is locked but hostname is world-readable.
+//  4. Runtime CLI: `docker inspect`, `podman inspect`, or `crictl inspect`,
+//     picked from the cgroup-derived runtime. This is what makes name
+//     lookup work in agents that can't read docker's data directory but
+//     can still talk to the docker socket.
+//
+// Empty strings are cached too (negative result) so a missing runtime
+// doesn't get re-probed on every event.
+func (e *EventEnricher) resolveContainerName(id, runtime string) string {
+	if id == "" {
+		return ""
+	}
+	if cached, ok := e.lookupNameCache(id); ok {
+		return cached
+	}
+	name := e.lookupDockerContainerName(id)
+	if name == "" {
+		// Filesystem missed — try the runtime CLI matching the cgroup hint,
+		// then docker as a generic fallback (many setups label cgroups as
+		// "containerd" but the actual control plane is dockerd).
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		switch runtime {
+		case "podman":
+			name = e.podmanCLIName(ctx, id)
+		case "containerd", "cri-o", "kubernetes":
+			name = e.crictlCLIName(ctx, id)
+			if name == "" {
+				name = e.dockerCLIName(ctx, id)
+			}
+		default:
+			name = e.dockerCLIName(ctx, id)
+		}
+	}
+	e.storeNameCache(id, name)
+	return name
+}
+
+func (e *EventEnricher) lookupNameCache(id string) (string, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	entry, ok := e.nameCache[id]
+	if !ok {
+		return "", false
+	}
+	if time.Since(entry.resolved) > e.nameCacheTTL {
+		return "", false
+	}
+	return entry.name, true
+}
+
+func (e *EventEnricher) storeNameCache(id, name string) {
+	e.mu.Lock()
+	e.nameCache[id] = containerNameEntry{name: name, resolved: time.Now()}
+	e.mu.Unlock()
+}
+
+// dockerInspectName runs `docker inspect --format {{.Name}} <id>`. The
+// command exits non-zero when the container isn't visible to this docker
+// daemon — that's fine, we return "" and let the caller fall through.
+// We pass the truncated 12-char ID variant when the full ID lookup fails,
+// since some runtimes only register the short ID.
+func dockerInspectName(ctx context.Context, id string) string {
+	if name := runInspect(ctx, "docker", "inspect", "--format", "{{.Name}}", id); name != "" {
+		return strings.TrimPrefix(name, "/")
+	}
+	if len(id) > 12 {
+		if name := runInspect(ctx, "docker", "inspect", "--format", "{{.Name}}", id[:12]); name != "" {
+			return strings.TrimPrefix(name, "/")
+		}
+	}
+	return ""
+}
+
+func podmanInspectName(ctx context.Context, id string) string {
+	if name := runInspect(ctx, "podman", "inspect", "--format", "{{.Name}}", id); name != "" {
+		return strings.TrimPrefix(name, "/")
+	}
+	return ""
+}
+
+// crictlInspectName uses the CRI client to resolve container names for
+// containerd/cri-o. The output JSON has `.status.metadata.name`; we
+// `jq` it via crictl's built-in --output go-template.
+func crictlInspectName(ctx context.Context, id string) string {
+	name := runInspect(ctx, "crictl", "inspect", "--output", "go-template", "--template", "{{.status.metadata.name}}", id)
+	return strings.TrimPrefix(name, "/")
+}
+
+// runInspect runs an inspect-like CLI and returns the trimmed stdout, or
+// "" on error. Short timeout is enforced by the caller's context.
+func runInspect(ctx context.Context, name string, args ...string) string {
+	out, err := exec.CommandContext(ctx, name, args...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // extractContainerID extracts container ID and runtime from a cgroup path
@@ -390,6 +528,15 @@ func (e *EventEnricher) CleanupCache() {
 		if now.Sub(cacheTime) > e.namespaceCacheTTL*2 {
 			delete(e.namespaceCache, pid)
 			delete(e.namespaceCacheTime, pid)
+		}
+	}
+
+	// Clean container-name cache. Two TTL multiplier here so negative
+	// caches expire promptly and a new runtime install is picked up
+	// within ~20 minutes without a restart.
+	for id, entry := range e.nameCache {
+		if now.Sub(entry.resolved) > e.nameCacheTTL*2 {
+			delete(e.nameCache, id)
 		}
 	}
 }
