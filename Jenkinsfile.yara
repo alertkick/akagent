@@ -35,7 +35,7 @@ pipeline {
                             -f Dockerfile.yara --target export \
                             --output type=local,dest=out-${arch} .
                     done
-                    file out-amd64/yara out-arm64/yara
+                    ls -l out-amd64/yara out-arm64/yara
                 '''
             }
         }
