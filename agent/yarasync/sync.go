@@ -75,7 +75,8 @@ func (s *Syncer) SyncOnce() (bool, error) {
 		return false, err
 	}
 	if s.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+s.cfg.Token)
+		// The control plane authenticates agents by tenant API key.
+		req.Header.Set("X-API-Key", s.cfg.Token)
 	}
 	if s.version != "" {
 		req.Header.Set("If-None-Match", s.version)
