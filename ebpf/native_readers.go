@@ -397,6 +397,10 @@ func (a *NativeEBPFAgent) StartEventListener(ctx context.Context) error {
 	// Start cache cleanup goroutine
 	go a.runCacheCleanup()
 
+	// Keep the container-name inventory warm so per-event enrichment is a
+	// pure map lookup and never forks a `docker inspect`.
+	go a.runInventoryRefresh()
+
 	// Resolve sshd's listening ports once at startup, then refresh on a
 	// long ticker so a sshd_config edit + `systemctl reload ssh` is picked
 	// up without an agent restart. Failures are non-fatal — the reader
@@ -623,6 +627,39 @@ func (a *NativeEBPFAgent) GetRateLimiterStats() RateLimiterStats {
 // GetEnrichmentStats returns enrichment cache statistics
 func (a *NativeEBPFAgent) GetEnrichmentStats() (containerCacheSize, namespaceCacheSize int) {
 	return a.enricher.CacheSize()
+}
+
+// containerInventoryRefreshInterval is how often the enricher relists running
+// containers to refresh its name inventory.
+const containerInventoryRefreshInterval = 30 * time.Second
+
+// runInventoryRefresh periodically rebuilds the enricher's container inventory
+// so per-event enrichment never forks a `docker inspect`. It warms the cache
+// once up front, then refreshes on a ticker until shutdown.
+func (a *NativeEBPFAgent) runInventoryRefresh() {
+	if a.enricher == nil {
+		return
+	}
+	refresh := func() {
+		if !a.enricher.IsEnabled() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		a.enricher.RefreshInventory(ctx)
+	}
+	refresh()
+
+	ticker := time.NewTicker(containerInventoryRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.shutdownChan:
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
 }
 
 // runCacheCleanup periodically cleans up the enrichment cache

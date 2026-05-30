@@ -71,90 +71,86 @@ func TestLookupDockerContainerName_TrimSlash(t *testing.T) {
 	}
 }
 
-func TestResolveContainerName_CLIFallbackAndCache(t *testing.T) {
+// withoutRuntimeCLIs disables the real runtime listers so tests exercise only
+// the in-memory inventory, never a real `docker ps` on the test host.
+func withoutRuntimeCLIs(e *EventEnricher) {
+	e.dockerList = func(context.Context) map[string]string { return nil }
+	e.podmanList = func(context.Context) map[string]string { return nil }
+	e.crictlList = func(context.Context) map[string]string { return nil }
+}
+
+func TestRefreshInventory_ListsRunningContainers(t *testing.T) {
 	e := NewEventEnricher()
-	// Filesystem lookup will miss in the test env, so CLI fallback runs.
-	var dockerCalls int
-	e.dockerCLIName = func(_ context.Context, id string) string {
-		dockerCalls++
-		if id != "deadbeef000000000000000000000000000000000000000000000000deadbeef" {
-			t.Errorf("unexpected id passed to docker CLI: %s", id)
-		}
-		return "alertkick-ui"
-	}
-	e.podmanCLIName = func(_ context.Context, _ string) string { return "" }
-	e.crictlCLIName = func(_ context.Context, _ string) string { return "" }
-
 	id := "deadbeef000000000000000000000000000000000000000000000000deadbeef"
+	var dockerCalls int
+	e.dockerList = func(context.Context) map[string]string {
+		dockerCalls++
+		return map[string]string{id: "alertkick-ui"}
+	}
+	e.podmanList = func(context.Context) map[string]string { return nil }
+	e.crictlList = func(context.Context) map[string]string { return nil }
 
-	if got := e.resolveContainerName(id, "docker"); got != "alertkick-ui" {
-		t.Fatalf("resolveContainerName = %q, want alertkick-ui", got)
+	e.RefreshInventory(context.Background())
+
+	// Per-event resolution is now a pure lookup — no shell-out, and the short
+	// 12-char ID resolves too.
+	if got := e.resolveContainerName(id); got != "alertkick-ui" {
+		t.Fatalf("resolveContainerName(full) = %q, want alertkick-ui", got)
+	}
+	if got := e.resolveContainerName(id[:12]); got != "alertkick-ui" {
+		t.Fatalf("resolveContainerName(short) = %q, want alertkick-ui", got)
 	}
 	if dockerCalls != 1 {
-		t.Fatalf("dockerCalls = %d, want 1", dockerCalls)
-	}
-
-	// Second call should be served from the per-ID cache — no extra shell-out.
-	if got := e.resolveContainerName(id, "docker"); got != "alertkick-ui" {
-		t.Fatalf("cached resolveContainerName = %q, want alertkick-ui", got)
-	}
-	if dockerCalls != 1 {
-		t.Fatalf("dockerCalls after cache hit = %d, want 1", dockerCalls)
+		t.Fatalf("dockerList called %d times for many resolves, want 1", dockerCalls)
 	}
 }
 
-func TestResolveContainerName_NegativeCache(t *testing.T) {
+func TestResolveContainerName_MissReadsFSOnceThenCaches(t *testing.T) {
 	e := NewEventEnricher()
-	calls := 0
-	e.dockerCLIName = func(_ context.Context, _ string) string {
-		calls++
-		return ""
-	}
-	e.podmanCLIName = func(_ context.Context, _ string) string { return "" }
-	e.crictlCLIName = func(_ context.Context, _ string) string { return "" }
-
+	withoutRuntimeCLIs(e)
+	// Filesystem lookup misses in the test env, so the unknown container
+	// resolves to "" — and that negative is remembered so repeated events for
+	// the same id don't re-probe the filesystem.
 	id := "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abc1"
-	if got := e.resolveContainerName(id, "docker"); got != "" {
+	if got := e.resolveContainerName(id); got != "" {
 		t.Fatalf("expected empty name for unknown container, got %q", got)
 	}
-	if calls != 1 {
-		t.Fatalf("docker calls = %d, want 1", calls)
-	}
-	// Second call should not re-shell — empty result is cached too.
-	_ = e.resolveContainerName(id, "docker")
-	if calls != 1 {
-		t.Fatalf("docker calls after negative cache hit = %d, want 1", calls)
+	if _, ok := e.lookupInventory(id); !ok {
+		t.Fatalf("negative result not cached in inventory for %s", id)
 	}
 }
 
-func TestResolveContainerName_RuntimeDispatch(t *testing.T) {
+func TestRefreshInventory_MergesRuntimes(t *testing.T) {
 	e := NewEventEnricher()
-	var picked string
-	e.dockerCLIName = func(_ context.Context, _ string) string { picked = "docker"; return "from-docker" }
-	e.podmanCLIName = func(_ context.Context, _ string) string { picked = "podman"; return "from-podman" }
-	e.crictlCLIName = func(_ context.Context, _ string) string { picked = "crictl"; return "from-crictl" }
+	dockerID := "d000000000000000000000000000000000000000000000000000000000000000"
+	crictlID := "c000000000000000000000000000000000000000000000000000000000000000"
+	e.dockerList = func(context.Context) map[string]string { return map[string]string{dockerID: "from-docker"} }
+	e.podmanList = func(context.Context) map[string]string { return nil }
+	e.crictlList = func(context.Context) map[string]string { return map[string]string{crictlID: "from-crictl"} }
 
-	cases := map[string]struct {
-		runtime string
-		want    string
-		via     string
-	}{
-		"docker":     {"docker", "from-docker", "docker"},
-		"podman":     {"podman", "from-podman", "podman"},
-		"containerd": {"containerd", "from-crictl", "crictl"},
-		"crio":       {"cri-o", "from-crictl", "crictl"},
-		"k8s":        {"kubernetes", "from-crictl", "crictl"},
+	e.RefreshInventory(context.Background())
+
+	if got := e.resolveContainerName(dockerID); got != "from-docker" {
+		t.Errorf("docker name = %q, want from-docker", got)
 	}
-	for label, c := range cases {
-		// Unique id per case so cache doesn't shadow the second runtime test.
-		id := "id-" + label + "-0000000000000000000000000000000000000000000000000000000000"
-		picked = ""
-		got := e.resolveContainerName(id, c.runtime)
-		if got != c.want {
-			t.Errorf("%s: name = %q, want %q", label, got, c.want)
-		}
-		if picked != c.via {
-			t.Errorf("%s: dispatched to %s, want %s", label, picked, c.via)
-		}
+	if got := e.resolveContainerName(crictlID); got != "from-crictl" {
+		t.Errorf("crictl name = %q, want from-crictl", got)
+	}
+}
+
+func TestParsePSList(t *testing.T) {
+	out := "abc123 alertkick-ui\n" +
+		"def456 web,web-alias\n" +
+		"  \n" + // blank line ignored
+		"ghi789" // no name column ignored
+	m := parsePSList(out)
+	if m["abc123"] != "alertkick-ui" {
+		t.Errorf("abc123 = %q, want alertkick-ui", m["abc123"])
+	}
+	if m["def456"] != "web" {
+		t.Errorf("def456 = %q, want web (first of comma list)", m["def456"])
+	}
+	if _, ok := m["ghi789"]; ok {
+		t.Errorf("ghi789 should be skipped (no name column)")
 	}
 }
