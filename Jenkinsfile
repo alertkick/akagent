@@ -36,6 +36,36 @@ pipeline {
             }
         }
 
+        // Pull the prebuilt static yara binaries (produced infrequently by the
+        // separate akagent-yara job, Jenkinsfile.yara) into the workspace so
+        // goreleaser bundles them. They land in packaging/linux/yara/ and are
+        // copied into the build container with the rest of the workspace.
+        stage('Fetch YARA binaries') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-s3-packages', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh '''
+                        set -eu
+                        AWS_DEFAULT_REGION=us-east-1
+                        S3_BUCKET=alertkick-agent-packages
+                        DL=yara-fetch-${BUILD_NUMBER}
+                        mkdir -p packaging/linux/yara
+                        docker rm -f ${DL} 2>/dev/null || true
+                        docker run -d --name ${DL} \
+                            -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+                            -e AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION} \
+                            --entrypoint sleep amazon/aws-cli 300
+                        trap 'docker rm -f ${DL} 2>/dev/null || true' EXIT
+                        for arch in amd64 arm64; do
+                            docker exec ${DL} aws s3 cp s3://${S3_BUCKET}/yara/latest/yara-${arch} /yara-${arch}
+                            docker cp ${DL}:/yara-${arch} packaging/linux/yara/yara-${arch}
+                            chmod +x packaging/linux/yara/yara-${arch}
+                        done
+                        ls -lh packaging/linux/yara/
+                    '''
+                }
+            }
+        }
+
         stage('Build & Test') {
             steps {
                 writeFile file: 'ci-build.sh', text: '''\
