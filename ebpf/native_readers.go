@@ -391,6 +391,9 @@ func (a *NativeEBPFAgent) StartEventListener(ctx context.Context) error {
 	// Start the periodic rootkit-indicator scanner.
 	a.initRootkitScanner()
 
+	// Start the YARA malware scanner (no-op unless YARA_RULES_PATH is set).
+	a.initYara()
+
 	// Start cache cleanup goroutine
 	go a.runCacheCleanup()
 
@@ -751,6 +754,9 @@ func (a *NativeEBPFAgent) readExecveEvents() {
 		}
 
 		a.sendEvent(event)
+
+		// Queue the executable for YARA scanning (no-op unless configured).
+		a.yaraScanExe(event.Process.ExePath)
 	}
 }
 
