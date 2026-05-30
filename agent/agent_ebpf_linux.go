@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"akagent/agent/responder"
 	"akagent/agent/sshlockdown"
 	"akagent/agent/sshlockdown/bpflsm"
 	"akagent/client"
@@ -21,6 +22,11 @@ type platformAgentData struct {
 	// lockdownManager owns the SSH lockdown / maintenance window state.
 	// nil until initSSHLockdown runs; nil-safe in the request handlers.
 	lockdownManager *sshlockdown.Manager
+
+	// responder performs active-response enforcement (block IP / kill
+	// process). Constructed lazily on first command; defaults to dry-run.
+	responder     *responder.Responder
+	responderOnce sync.Once
 
 	// lockdownLSM is the concrete LSM-BPF blocker handle when that path
 	// is active. The manager talks to the Blocker interface; we hold a
@@ -162,6 +168,21 @@ func (a *agent) handleEBPFRequest(req client.Request) bool {
 	case "ssh_lockdown.lock_now":
 		a.log.Info().Msg("agent.HandleServerRequest - received ssh_lockdown.lock_now request")
 		a.handleSSHLockdownLockNowRequest(req)
+	case "fim.approve_paths":
+		a.log.Info().Msg("agent.HandleServerRequest - received fim.approve_paths request")
+		a.handleFIMApprovePathsRequest(req)
+	case "fim.rebaseline":
+		a.log.Info().Msg("agent.HandleServerRequest - received fim.rebaseline request")
+		a.handleFIMRebaselineRequest(req)
+	case "response.block_ip":
+		a.log.Info().Msg("agent.HandleServerRequest - received response.block_ip request")
+		a.handleResponseBlockIPRequest(req)
+	case "response.unblock_ip":
+		a.log.Info().Msg("agent.HandleServerRequest - received response.unblock_ip request")
+		a.handleResponseUnblockIPRequest(req)
+	case "response.kill_process":
+		a.log.Info().Msg("agent.HandleServerRequest - received response.kill_process request")
+		a.handleResponseKillProcessRequest(req)
 	default:
 		return false
 	}

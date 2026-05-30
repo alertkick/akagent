@@ -9,6 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"akagent/agent/authmonitor"
+	"akagent/agent/fim"
+	"akagent/agent/rootkitscan"
+	"akagent/agent/yarascan"
+	"akagent/agent/yarasync"
 	"akagent/ebpf/bpfgen"
 	"akagent/logger"
 
@@ -216,6 +221,21 @@ type NativeEBPFAgent struct {
 
 	// WaitGroup for reader goroutines
 	readerWg sync.WaitGroup
+
+	// File integrity monitor — nil unless FileIntegrity is enabled.
+	fimManager *fim.Manager
+
+	// Auth-log brute-force monitor — started with the event listener.
+	authMonitor *authmonitor.Monitor
+
+	// Rootkit indicator scanner — started with the event listener.
+	rootkitScanner *rootkitscan.Scanner
+
+	// YARA malware scanner — dormant until a ruleset is present.
+	yaraScanner *yarascan.Scanner
+
+	// YARA rules syncer — nil unless YARA_SYNC_URL is configured.
+	yaraSyncer *yarasync.Syncer
 }
 
 // SSHDConfigSnapshot returns the current sshd_config snapshot from the
@@ -299,6 +319,10 @@ func NewNativeAgentWithConfig(configPath string) (*NativeEBPFAgent, error) {
 	if err := agent.LoadRulesFromDisk(); err != nil {
 		nativeLog.Warn().Err(err).Msg("Failed to load persisted detection rules")
 	}
+
+	// Start file-integrity monitoring if enabled (baseline scan runs in the
+	// background, so this doesn't block startup).
+	agent.initFIM()
 
 	return agent, nil
 }
@@ -470,6 +494,10 @@ func (a *NativeEBPFAgent) UpdateNativeConfig(newConfig NativeConfig) error {
 			nativeLog.Warn().Err(err).Msg("Failed to resync discarder maps on config update")
 		}
 	}
+
+	// Start FIM if this config push enabled it (idempotent — a no-op when
+	// already running or still disabled).
+	a.initFIM()
 
 	nativeLog.Info().Msg("Updated native agent config")
 	return nil

@@ -385,6 +385,15 @@ func (a *NativeEBPFAgent) StartEventListener(ctx context.Context) error {
 	}
 	go a.readIoctlEvents()
 
+	// Start the auth-log brute-force monitor alongside the eBPF readers.
+	a.initAuthMonitor()
+
+	// Start the periodic rootkit-indicator scanner.
+	a.initRootkitScanner()
+
+	// Start the YARA malware scanner (no-op unless YARA_RULES_PATH is set).
+	a.initYara()
+
 	// Start cache cleanup goroutine
 	go a.runCacheCleanup()
 
@@ -745,6 +754,9 @@ func (a *NativeEBPFAgent) readExecveEvents() {
 		}
 
 		a.sendEvent(event)
+
+		// Queue the executable for YARA scanning (no-op unless configured).
+		a.yaraScan(event.Process.ExePath)
 	}
 }
 
@@ -780,6 +792,10 @@ func (a *NativeEBPFAgent) readFileopsEvents() {
 		}
 
 		a.sendEvent(event)
+
+		// Route write-ish events on baselined paths to the integrity monitor,
+		// which debounces and re-hashes to detect content changes.
+		a.fimNotify(&event)
 	}
 }
 

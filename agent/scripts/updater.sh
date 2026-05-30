@@ -18,8 +18,8 @@ set -euo pipefail
 
 # Configuration
 AGENT_SERVICE="alertkick-agent"
-AGENT_BINARY="/usr/local/bin/alertkick-agent"
-BACKUP_BINARY="/usr/local/bin/alertkick-agent.backup"
+AGENT_BINARY="/usr/bin/alertkick-agent"
+BACKUP_BINARY="/var/lib/alertkick-agent/alertkick-agent.backup"
 LOG_DIR="/var/log/alertkick-agent"
 LOG_FILE="${LOG_DIR}/update.log"
 HEALTH_CHECK_TIMEOUT=30

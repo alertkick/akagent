@@ -45,6 +45,9 @@ archives:
       - linux
     format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: packaging/linux/yara/yara-{{ .Arch }}
+        dst: bin/yara
 
   - id: windows-archive
     builds:
@@ -87,6 +90,10 @@ nfpms:
         type: dir
       - dst: /usr/lib/alertkick-agent/plugins
         type: dir
+      - src: packaging/linux/yara/yara-{{ .Arch }}
+        dst: /usr/lib/alertkick-agent/bin/yara
+        file_info:
+          mode: 0755
       - src: LICENSE.txt
         dst: /usr/share/doc/alertkick-agent/LICENSE.txt
       - src: THIRD_PARTY_NOTICES.md
@@ -130,6 +137,10 @@ nfpms:
         type: dir
       - dst: /usr/lib/alertkick-agent/plugins
         type: dir
+      - src: packaging/linux/yara/yara-{{ .Arch }}
+        dst: /usr/lib/alertkick-agent/bin/yara
+        file_info:
+          mode: 0755
       - src: LICENSE.txt
         dst: /usr/share/doc/alertkick-agent/LICENSE.txt
       - src: THIRD_PARTY_NOTICES.md

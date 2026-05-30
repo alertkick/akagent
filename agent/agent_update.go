@@ -154,11 +154,26 @@ func (a *agent) handleUpdateAgentRequest(req client.Request) {
 		return
 	}
 
-	// Launch the updater script as a detached process.
-	// The script will: stop the agent service, install the new .deb, and restart.
-	// Since the script stops our service, our process will be killed during the update.
-	// We run it in a new process group so it survives our termination.
-	cmd := exec.Command(scriptPath, "--package", packagePath, "--current-version", a.version)
+	// Launch the updater script. It stops our service, installs the new .deb,
+	// and starts us again. The catch: stopping our service also tears down our
+	// cgroup, and systemd's default KillMode=control-group would SIGTERM every
+	// process in it — the updater included — before it can reinstall us. A new
+	// process group (Setpgid) does NOT escape the cgroup, so that isn't enough.
+	//
+	// Run the updater as a transient systemd unit instead. systemd-run reparents
+	// it under PID 1 in its own cgroup, so `systemctl stop alertkick-agent` can't
+	// reach it. Fall back to a bare detached exec on hosts without systemd-run.
+	var cmd *exec.Cmd
+	if runner, lookErr := exec.LookPath("systemd-run"); lookErr == nil {
+		cmd = exec.Command(runner,
+			"--collect",
+			"--unit", fmt.Sprintf("alertkick-agent-update-%d", time.Now().Unix()),
+			"--description", "AlertKick agent self-update",
+			scriptPath, "--package", packagePath, "--current-version", a.version)
+	} else {
+		a.log.Warn().Msg("agent.handleUpdateAgentRequest - systemd-run not found, falling back to detached exec (update may be killed with our cgroup)")
+		cmd = exec.Command(scriptPath, "--package", packagePath, "--current-version", a.version)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
