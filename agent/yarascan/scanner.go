@@ -1,8 +1,9 @@
 // Package yarascan scans files against YARA rules to catch known malware. It
 // shells out to the `yara` CLI rather than linking libyara via cgo, so it adds
-// no build-toolchain requirements to the agent — YARA and the rules are an
-// optional host-side dependency the operator supplies. Scans run on a bounded
-// worker so a burst of exec events can't spawn unbounded yara processes.
+// no build-toolchain requirements to the agent. The active ruleset can be
+// swapped at runtime (SetRules) so the rules-sync component can push updates
+// without restarting the agent. Scans run on a bounded worker so a burst of
+// exec events can't spawn unbounded yara processes.
 package yarascan
 
 import (
@@ -13,9 +14,13 @@ import (
 	"sync"
 )
 
+// DefaultRulesPath is where the rules-sync component writes the bundle and the
+// scanner reads it when YARA_RULES_PATH isn't set explicitly.
+const DefaultRulesPath = "/var/lib/alertkick-agent/yara/rules.yar"
+
 // Config controls the scanner.
 type Config struct {
-	RulesPath string // file or directory of .yar rules; empty disables scanning
+	RulesPath string // initial rules file/dir; may be empty and set later
 	Binary    string // yara binary name/path (default "yara")
 	QueueSize int    // pending-scan buffer (default 256)
 }
@@ -26,80 +31,103 @@ type Match struct {
 	Rules []string
 }
 
-// Scanner runs YARA scans asynchronously.
+// Scanner runs YARA scans asynchronously against a swappable ruleset.
 type Scanner struct {
-	cfg       Config
-	onMatch   func(Match)
-	run       func(rulesPath, target string) (string, error) // injectable for tests
+	binary  string
+	onMatch func(Match)
+	run     func(rulesPath, target string) (string, error) // injectable for tests
+
+	queue     chan string
+	stop      chan struct{}
+	startOnce sync.Once
+
+	mu        sync.Mutex
+	rulesPath string
 	available bool
-
-	queue chan string
-	stop  chan struct{}
-
-	mu   sync.Mutex
-	seen map[string]int64 // path → mtime already scanned (de-dupe)
+	seen      map[string]int64 // path → mtime already scanned (de-dupe)
 }
 
-// New builds a Scanner. It is "available" only when a rules path is configured,
-// the rules exist, and the yara binary is on PATH — otherwise every method is a
-// cheap no-op.
+// New builds a Scanner. The yara binary must be on PATH and a ruleset present
+// for scanning to be "available"; both can become true later via SetRules.
 func New(cfg Config, onMatch func(Match)) *Scanner {
-	if cfg.Binary == "" {
-		cfg.Binary = "yara"
+	binary := cfg.Binary
+	if binary == "" {
+		binary = "yara"
 	}
-	if cfg.QueueSize <= 0 {
-		cfg.QueueSize = 256
+	qs := cfg.QueueSize
+	if qs <= 0 {
+		qs = 256
 	}
 	s := &Scanner{
-		cfg:     cfg,
+		binary:  binary,
 		onMatch: onMatch,
-		seen:    make(map[string]int64),
-		queue:   make(chan string, cfg.QueueSize),
+		queue:   make(chan string, qs),
 		stop:    make(chan struct{}),
+		seen:    make(map[string]int64),
 	}
 	s.run = s.execYara
-	if cfg.RulesPath != "" {
-		if _, err := os.Stat(cfg.RulesPath); err == nil {
-			if _, err := exec.LookPath(cfg.Binary); err == nil {
-				s.available = true
-			}
-		}
-	}
+	s.SetRules(cfg.RulesPath)
 	return s
 }
 
-// Available reports whether scanning is configured and usable.
-func (s *Scanner) Available() bool { return s.available }
+// SetRules points the scanner at a new ruleset path and recomputes
+// availability. Called by rules-sync after an atomic swap; safe concurrently.
+func (s *Scanner) SetRules(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rulesPath = path
+	s.available = s.checkAvailable(path)
+}
 
-// Start launches the scan worker. No-op when unavailable.
-func (s *Scanner) Start() {
-	if !s.available {
-		return
+func (s *Scanner) checkAvailable(path string) bool {
+	if path == "" {
+		return false
 	}
-	go func() {
-		for {
-			select {
-			case <-s.stop:
-				return
-			case path := <-s.queue:
-				s.scanOne(path)
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+	if _, err := exec.LookPath(s.binary); err != nil {
+		return false
+	}
+	return true
+}
+
+// Available reports whether scanning is currently usable.
+func (s *Scanner) Available() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.available
+}
+
+// Start launches the scan worker (idempotent). The worker runs regardless of
+// availability; ScanAsync gates enqueues, so rules arriving later just work.
+func (s *Scanner) Start() {
+	s.startOnce.Do(func() {
+		go func() {
+			for {
+				select {
+				case <-s.stop:
+					return
+				case path := <-s.queue:
+					s.scanOne(path)
+				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 // Stop ends the worker.
 func (s *Scanner) Stop() { close(s.stop) }
 
-// ScanAsync enqueues a path for scanning (non-blocking; drops if the queue is
-// full). No-op when unavailable or path is empty.
+// ScanAsync enqueues a path for scanning (non-blocking; drops if full). No-op
+// when unavailable or path is empty.
 func (s *Scanner) ScanAsync(path string) {
-	if !s.available || path == "" {
+	if path == "" || !s.Available() {
 		return
 	}
 	select {
 	case s.queue <- path:
-	default: // queue full — best-effort, drop
+	default:
 	}
 }
 
@@ -109,7 +137,13 @@ func (s *Scanner) scanOne(path string) {
 		return
 	}
 	mtime := info.ModTime().UnixNano()
+
 	s.mu.Lock()
+	rulesPath, available := s.rulesPath, s.available
+	if !available || rulesPath == "" {
+		s.mu.Unlock()
+		return
+	}
 	if s.seen[path] == mtime {
 		s.mu.Unlock()
 		return // same content already scanned
@@ -117,7 +151,7 @@ func (s *Scanner) scanOne(path string) {
 	s.seen[path] = mtime
 	s.mu.Unlock()
 
-	out, err := s.run(s.cfg.RulesPath, path)
+	out, err := s.run(rulesPath, path)
 	if err != nil {
 		return
 	}
@@ -127,8 +161,7 @@ func (s *Scanner) scanOne(path string) {
 }
 
 func (s *Scanner) execYara(rulesPath, target string) (string, error) {
-	// -r recurse rule dirs, -f fast match, -w no warnings; positional: rules target
-	out, err := exec.Command(s.cfg.Binary, "-r", "-w", rulesPath, target).Output()
+	out, err := exec.Command(s.binary, "-r", "-w", rulesPath, target).Output()
 	return string(out), err
 }
 
@@ -142,12 +175,9 @@ func parseYaraOutput(out string) []string {
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(line)
-		name := fields[0]
-		// Skip namespace/meta lines that some yara versions emit (start with "0x"
-		// offsets or contain ':' from string-id dumps without -s, defensively).
+		name := strings.Fields(line)[0]
 		if _, err := strconv.ParseInt(strings.TrimPrefix(name, "0x"), 0, 64); err == nil {
-			continue
+			continue // skip offset/meta lines
 		}
 		if !seen[name] {
 			seen[name] = true

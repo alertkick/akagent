@@ -13,6 +13,7 @@ import (
 	"akagent/agent/fim"
 	"akagent/agent/rootkitscan"
 	"akagent/agent/yarascan"
+	"akagent/agent/yarasync"
 	"akagent/ebpf/bpfgen"
 	"akagent/logger"
 
@@ -230,8 +231,11 @@ type NativeEBPFAgent struct {
 	// Rootkit indicator scanner — started with the event listener.
 	rootkitScanner *rootkitscan.Scanner
 
-	// YARA malware scanner — nil/no-op unless YARA_RULES_PATH is configured.
+	// YARA malware scanner — dormant until a ruleset is present.
 	yaraScanner *yarascan.Scanner
+
+	// YARA rules syncer — nil unless YARA_SYNC_URL is configured.
+	yaraSyncer *yarasync.Syncer
 }
 
 // SSHDConfigSnapshot returns the current sshd_config snapshot from the

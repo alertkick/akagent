@@ -8,19 +8,25 @@ import (
 	"time"
 
 	"akagent/agent/yarascan"
+	"akagent/agent/yarasync"
 
 	"github.com/rs/xid"
 )
 
-// initYara starts the YARA scanner if YARA_RULES_PATH is set and the yara
-// binary is available. Optional YARA_BIN overrides the binary path. No-op
-// otherwise.
+// initYara starts the YARA scanner and (when configured) the rules-sync loop.
+// The scanner worker always runs; it stays dormant until a ruleset is present
+// — either a static YARA_RULES_PATH file or one pulled by the syncer. The yara
+// binary is taken from YARA_BIN, else the bundled/PATH "yara".
 func (a *NativeEBPFAgent) initYara() {
 	if a.yaraScanner != nil {
 		return
 	}
+	rulesPath := os.Getenv("YARA_RULES_PATH")
+	if rulesPath == "" {
+		rulesPath = yarascan.DefaultRulesPath
+	}
 	a.yaraScanner = yarascan.New(yarascan.Config{
-		RulesPath: os.Getenv("YARA_RULES_PATH"),
+		RulesPath: rulesPath,
 		Binary:    os.Getenv("YARA_BIN"),
 	}, func(m yarascan.Match) {
 		ev := buildYaraEvent(m)
@@ -30,10 +36,23 @@ func (a *NativeEBPFAgent) initYara() {
 			nativeLog.Warn().Msg("Event channel full, dropping YARA event")
 		}
 	})
-	if a.yaraScanner.Available() {
-		a.yaraScanner.Start()
-		nativeLog.Info().Msg("YARA malware scanner started")
+	a.yaraScanner.Start()
+
+	// Optional rules-sync: pull the curated + tenant-custom ruleset from the
+	// control plane and hot-swap it in (the scanner re-checks availability on
+	// each update).
+	if url := os.Getenv("YARA_SYNC_URL"); url != "" {
+		a.yaraSyncer = yarasync.New(yarasync.Config{
+			URL:       url,
+			Token:     os.Getenv("YARA_SYNC_TOKEN"),
+			RulesPath: rulesPath,
+		}, func(p string) {
+			a.yaraScanner.SetRules(p)
+			nativeLog.Info().Msg("YARA ruleset updated")
+		})
+		a.yaraSyncer.Start()
 	}
+	nativeLog.Info().Bool("available", a.yaraScanner.Available()).Str("rules", rulesPath).Msg("YARA scanner initialized")
 }
 
 // yaraScan queues a file path for YARA scanning. No-op when the scanner isn't
