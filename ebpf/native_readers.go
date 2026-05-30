@@ -385,6 +385,9 @@ func (a *NativeEBPFAgent) StartEventListener(ctx context.Context) error {
 	}
 	go a.readIoctlEvents()
 
+	// Start the auth-log brute-force monitor alongside the eBPF readers.
+	a.initAuthMonitor()
+
 	// Start cache cleanup goroutine
 	go a.runCacheCleanup()
 

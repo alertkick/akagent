@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"akagent/agent/authmonitor"
 	"akagent/agent/fim"
 	"akagent/ebpf/bpfgen"
 	"akagent/logger"
@@ -220,6 +221,9 @@ type NativeEBPFAgent struct {
 
 	// File integrity monitor — nil unless FileIntegrity is enabled.
 	fimManager *fim.Manager
+
+	// Auth-log brute-force monitor — started with the event listener.
+	authMonitor *authmonitor.Monitor
 }
 
 // SSHDConfigSnapshot returns the current sshd_config snapshot from the
