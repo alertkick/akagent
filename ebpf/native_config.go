@@ -115,6 +115,40 @@ type NativeConfig struct {
 	// ---- Native Lists Configuration ----
 	// NativeLists controls comprehensive binary/path exclusions and detections
 	NativeLists NativeListConfig `yaml:"native_lists"`
+
+	// ---- File Integrity Monitoring (FIM) ----
+	// FileIntegrity baselines checksums of system binaries and /etc and
+	// raises a finding when a monitored file's content changes. Requires
+	// EnableFile (file events) to be active.
+	FileIntegrity FileIntegrityConfig `yaml:"file_integrity"`
+}
+
+// FileIntegrityConfig controls checksum-based file integrity monitoring.
+// On enable the agent baselines every file under Paths (minus Exclude),
+// then re-hashes a file when an eBPF write/rename/chmod/unlink touches it
+// and emits a finding if the digest changed from the baseline.
+type FileIntegrityConfig struct {
+	// Enabled toggles FIM. Off by default.
+	Enabled bool `yaml:"enabled"`
+
+	// Paths are the directories whose files are baselined (recursive).
+	Paths []string `yaml:"paths,omitempty"`
+
+	// Exclude drops files whose path has any of these prefixes (churny
+	// files that legitimately change, e.g. /etc/resolv.conf).
+	Exclude []string `yaml:"exclude,omitempty"`
+
+	// HashAlgo is "sha256" (default, tamper-resistant) or "md5".
+	HashAlgo string `yaml:"hash_algo,omitempty"`
+
+	// SuppressPkgMgr, when true, treats changes made by a package manager
+	// (apt/dpkg/rpm/yum/dnf/apk) as expected: silently re-baseline and emit
+	// an informational audit event instead of a critical finding.
+	SuppressPkgMgr bool `yaml:"suppress_pkg_mgr"`
+
+	// DebounceMs coalesces the burst of events from a single edit before
+	// re-hashing the path. Default 750ms.
+	DebounceMs int `yaml:"debounce_ms,omitempty"`
 }
 
 // AlertFilterConfig controls the agent's noise filter. The filter drops
@@ -280,6 +314,29 @@ func DefaultNativeConfig() NativeConfig {
 
 		// Native lists configuration for comprehensive exclusions/detections
 		NativeLists: DefaultNativeListConfig(),
+
+		// File integrity monitoring (off until enabled via profile/config)
+		FileIntegrity: DefaultFileIntegrityConfig(),
+	}
+}
+
+// DefaultFileIntegrityConfig returns conservative FIM defaults: disabled,
+// SHA-256, package-manager changes suppressed, monitoring the standard
+// binary directories plus /etc with the usual churny files excluded.
+func DefaultFileIntegrityConfig() FileIntegrityConfig {
+	return FileIntegrityConfig{
+		Enabled: false,
+		Paths: []string{
+			"/usr/bin", "/usr/sbin", "/bin", "/sbin",
+			"/usr/local/bin", "/usr/local/sbin", "/etc",
+		},
+		Exclude: []string{
+			"/etc/mtab", "/etc/resolv.conf", "/etc/ld.so.cache",
+			"/etc/adjtime", "/etc/machine-id", "/etc/.updated", "/etc/.pwd.lock",
+		},
+		HashAlgo:       "sha256",
+		SuppressPkgMgr: true,
+		DebounceMs:     750,
 	}
 }
 
@@ -341,6 +398,21 @@ func (c *NativeConfig) Validate() error {
 	}
 	if c.EventChannelSize < 10 {
 		c.EventChannelSize = 10 // Minimum 10 events
+	}
+	if c.FileIntegrity.Enabled {
+		fi := DefaultFileIntegrityConfig()
+		if len(c.FileIntegrity.Paths) == 0 {
+			c.FileIntegrity.Paths = fi.Paths
+		}
+		if c.FileIntegrity.HashAlgo == "" {
+			c.FileIntegrity.HashAlgo = fi.HashAlgo
+		}
+		if c.FileIntegrity.HashAlgo != "sha256" && c.FileIntegrity.HashAlgo != "md5" {
+			return fmt.Errorf("file_integrity.hash_algo must be \"sha256\" or \"md5\", got %q", c.FileIntegrity.HashAlgo)
+		}
+		if c.FileIntegrity.DebounceMs <= 0 {
+			c.FileIntegrity.DebounceMs = fi.DebounceMs
+		}
 	}
 	return nil
 }
