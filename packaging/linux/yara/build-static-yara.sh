@@ -5,10 +5,9 @@
 # `goreleaser release`. See README.md in this directory for the goreleaser wiring.
 #
 # Build deps (Debian/Ubuntu build image):
-#   apt-get install -y build-essential automake libtool make pkg-config \
-#       libssl-dev libjansson-dev libmagic-dev flex bison
-# For a fully static binary, the static variants of those libs must be present
-# (libssl, libjansson, libmagic), or build them static first.
+#   apt-get install -y build-essential automake autoconf libtool make pkg-config \
+#       libssl-dev libjansson-dev zlib1g-dev flex bison file
+# The -dev packages ship the static .a libs that -all-static needs.
 set -euo pipefail
 
 YARA_VERSION="${YARA_VERSION:-4.5.2}"
@@ -23,12 +22,10 @@ curl -sfL "https://github.com/VirusTotal/yara/archive/refs/tags/v${YARA_VERSION}
 cd "yara-${YARA_VERSION}"
 
 ./bootstrap.sh
-# --disable-shared + static LDFLAGS produce a self-contained binary. Drop the
-# optional modules that pull heavy deps if a smaller/portable build is wanted.
-./configure --disable-shared --enable-static \
-    --with-crypto \
-    LDFLAGS="-static"
-make -j"$(nproc)"
+# Do NOT pass LDFLAGS=-static to configure (breaks its pthread probe). Configure
+# normally, then static-link at the make step with libtool's -all-static.
+./configure --disable-shared --enable-static --with-crypto
+make -j"$(nproc)" LDFLAGS="-all-static"
 
 install -D -m 0755 "yara" "${OUT_DIR}/yara-${ARCH}"
 echo "Wrote ${OUT_DIR}/yara-${ARCH}"
