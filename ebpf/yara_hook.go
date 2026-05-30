@@ -36,11 +36,12 @@ func (a *NativeEBPFAgent) initYara() {
 	}
 }
 
-// yaraScanExe queues an executable for YARA scanning. No-op when the scanner
-// isn't configured/available.
-func (a *NativeEBPFAgent) yaraScanExe(exePath string) {
+// yaraScan queues a file path for YARA scanning. No-op when the scanner isn't
+// configured/available. Used for both executables (on exec) and files the
+// integrity monitor reports as changed.
+func (a *NativeEBPFAgent) yaraScan(path string) {
 	if a.yaraScanner != nil {
-		a.yaraScanner.ScanAsync(exePath)
+		a.yaraScanner.ScanAsync(path)
 	}
 }
 

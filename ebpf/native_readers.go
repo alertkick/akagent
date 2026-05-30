@@ -756,7 +756,7 @@ func (a *NativeEBPFAgent) readExecveEvents() {
 		a.sendEvent(event)
 
 		// Queue the executable for YARA scanning (no-op unless configured).
-		a.yaraScanExe(event.Process.ExePath)
+		a.yaraScan(event.Process.ExePath)
 	}
 }
 

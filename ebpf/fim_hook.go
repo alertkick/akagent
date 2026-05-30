@@ -29,8 +29,8 @@ func (a *NativeEBPFAgent) initFIM() {
 			DebounceMs:     fc.DebounceMs,
 			StatePath:      fim.DefaultBaselinePath,
 		},
-		func(c fim.Change) { a.emitFIMEvent(buildFIMEvent(c, false)) },
-		func(c fim.Change) { a.emitFIMEvent(buildFIMEvent(c, true)) },
+		func(c fim.Change) { a.emitFIMEvent(buildFIMEvent(c, false)); a.yaraScanFIMChange(c) },
+		func(c fim.Change) { a.emitFIMEvent(buildFIMEvent(c, true)); a.yaraScanFIMChange(c) },
 	)
 	a.fimManager.Start()
 	nativeLog.Info().
@@ -38,6 +38,15 @@ func (a *NativeEBPFAgent) initFIM() {
 		Str("algo", fc.HashAlgo).
 		Bool("suppress_pkg_mgr", fc.SuppressPkgMgr).
 		Msg("File integrity monitoring enabled")
+}
+
+// yaraScanFIMChange queues a changed file for YARA scanning so a modified or
+// newly-added baselined file (e.g. a trojaned binary or dropped /etc payload)
+// is checked against the malware ruleset. Removals have nothing to scan.
+func (a *NativeEBPFAgent) yaraScanFIMChange(c fim.Change) {
+	if c.Kind != fim.KindRemoved {
+		a.yaraScan(c.Path)
+	}
 }
 
 // fimNotify routes a parsed file event to the integrity manager when FIM is
