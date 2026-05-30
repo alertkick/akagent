@@ -11,6 +11,7 @@ import (
 
 	"akagent/agent/authmonitor"
 	"akagent/agent/fim"
+	"akagent/agent/rootkitscan"
 	"akagent/ebpf/bpfgen"
 	"akagent/logger"
 
@@ -224,6 +225,9 @@ type NativeEBPFAgent struct {
 
 	// Auth-log brute-force monitor — started with the event listener.
 	authMonitor *authmonitor.Monitor
+
+	// Rootkit indicator scanner — started with the event listener.
+	rootkitScanner *rootkitscan.Scanner
 }
 
 // SSHDConfigSnapshot returns the current sshd_config snapshot from the
