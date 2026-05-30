@@ -18,6 +18,23 @@ import (
 // scanner reads it when YARA_RULES_PATH isn't set explicitly.
 const DefaultRulesPath = "/var/lib/alertkick-agent/yara/rules.yar"
 
+// BundledBinaryPath is where the agent package installs the static yara binary
+// it ships per arch. Preferred over a system yara so the rule-compilation
+// version matches across hosts.
+const BundledBinaryPath = "/usr/lib/alertkick-agent/bin/yara"
+
+// resolveBinary picks the yara binary: an explicit override, else the bundled
+// static binary if present, else "yara" from PATH.
+func resolveBinary(override string) string {
+	if override != "" {
+		return override
+	}
+	if _, err := os.Stat(BundledBinaryPath); err == nil {
+		return BundledBinaryPath
+	}
+	return "yara"
+}
+
 // Config controls the scanner.
 type Config struct {
 	RulesPath string // initial rules file/dir; may be empty and set later
@@ -50,10 +67,7 @@ type Scanner struct {
 // New builds a Scanner. The yara binary must be on PATH and a ruleset present
 // for scanning to be "available"; both can become true later via SetRules.
 func New(cfg Config, onMatch func(Match)) *Scanner {
-	binary := cfg.Binary
-	if binary == "" {
-		binary = "yara"
-	}
+	binary := resolveBinary(cfg.Binary)
 	qs := cfg.QueueSize
 	if qs <= 0 {
 		qs = 256

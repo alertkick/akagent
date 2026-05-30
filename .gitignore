@@ -68,3 +68,7 @@ agent_checks.json
 apapi
 devtools
 *.http
+
+# Static yara build artifacts (produced in CI)
+packaging/linux/yara/yara-amd64
+packaging/linux/yara/yara-arm64
