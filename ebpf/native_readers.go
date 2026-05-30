@@ -780,6 +780,10 @@ func (a *NativeEBPFAgent) readFileopsEvents() {
 		}
 
 		a.sendEvent(event)
+
+		// Route write-ish events on baselined paths to the integrity monitor,
+		// which debounces and re-hashes to detect content changes.
+		a.fimNotify(&event)
 	}
 }
 

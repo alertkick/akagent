@@ -162,6 +162,12 @@ func (a *agent) handleEBPFRequest(req client.Request) bool {
 	case "ssh_lockdown.lock_now":
 		a.log.Info().Msg("agent.HandleServerRequest - received ssh_lockdown.lock_now request")
 		a.handleSSHLockdownLockNowRequest(req)
+	case "fim.approve_paths":
+		a.log.Info().Msg("agent.HandleServerRequest - received fim.approve_paths request")
+		a.handleFIMApprovePathsRequest(req)
+	case "fim.rebaseline":
+		a.log.Info().Msg("agent.HandleServerRequest - received fim.rebaseline request")
+		a.handleFIMRebaselineRequest(req)
 	default:
 		return false
 	}
