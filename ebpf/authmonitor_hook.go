@@ -23,7 +23,7 @@ func (a *NativeEBPFAgent) initAuthMonitor() {
 		select {
 		case a.eventChan <- ev:
 		default:
-			nativeLog.Warn().Msg("Event channel full, dropping brute-force event")
+			a.recordDroppedEvent()
 		}
 	})
 	a.authMonitor.Start()

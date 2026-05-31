@@ -231,9 +231,31 @@ type NativeAgentConfig struct {
 	EnableEnrichment          bool `json:"enable_enrichment" yaml:"enable_enrichment"`
 	EnrichmentCacheTTLSeconds int  `json:"enrichment_cache_ttl_seconds,omitempty" yaml:"enrichment_cache_ttl_seconds,omitempty"`
 
+	// ---- Event Channel Buffer ----
+	// EventChannelSize is the per-host event channel buffer (applied on agent
+	// restart). Larger values let busy hosts absorb event bursts without
+	// dropping at the source.
+	EventChannelSize int `json:"event_channel_size,omitempty" yaml:"event_channel_size,omitempty"`
+
+	// ---- Event Scoping ----
+	FileMonitor   *NativeFileMonitorConfig   `json:"file_monitor,omitempty" yaml:"file_monitor,omitempty"`
+	SignalMonitor *NativeSignalMonitorConfig `json:"signal_monitor,omitempty" yaml:"signal_monitor,omitempty"`
+
 	// ---- Alerting ----
 	EnableAlerts bool                   `json:"enable_alerts" yaml:"enable_alerts"`
 	AlertRules   []NativeAgentAlertRule `json:"alert_rules,omitempty" yaml:"alert_rules,omitempty"`
+}
+
+// NativeFileMonitorConfig scopes which file events the agent emits: write-type
+// operations under WriteDirs, and any operation on ReadFiles.
+type NativeFileMonitorConfig struct {
+	WriteDirs []string `json:"write_dirs,omitempty" yaml:"write_dirs,omitempty"`
+	ReadFiles []string `json:"read_files,omitempty" yaml:"read_files,omitempty"`
+}
+
+// NativeSignalMonitorConfig scopes which process-signal numbers the agent emits.
+type NativeSignalMonitorConfig struct {
+	EmitSignals []int `json:"emit_signals,omitempty" yaml:"emit_signals,omitempty"`
 }
 
 // NativeAgentAlertRule represents an alert rule configuration from alertkick-ui

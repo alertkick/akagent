@@ -107,6 +107,14 @@ const (
 	MaxBatchSize = 500
 	// HighPriorityFlushThreshold - flush immediately if this many high priority events
 	HighPriorityFlushThreshold = 5
+	// sendQueueDepth is how many ready batches can be buffered toward the
+	// async sender. It absorbs brief endpoint slowness/disconnects without
+	// blocking the drain loop; once full, batches are dropped (and counted)
+	// rather than stalling event consumption.
+	sendQueueDepth = 16
+	// maxHeldEvents caps how many events the drain loop retains while the
+	// endpoint is disconnected, so a long outage can't grow memory unbounded.
+	maxHeldEvents = 4 * MaxBatchSize
 )
 
 // StartEBPFEventSender starts processing events from the native eBPF agent
@@ -126,49 +134,90 @@ func (a *agent) StartEBPFEventSender(shutdown chan struct{}, wg *sync.WaitGroup)
 		eventChan = a.platformData.nativeAgent.EventChannel()
 	}
 
+	// Async sender: the blocking gzip+websocket send runs in its own
+	// goroutine so this drain loop never stalls on the network. If the
+	// drain loop blocked on a send (as it used to), eventChan would back up
+	// and the native agent would drop events at source under any endpoint
+	// slowness.
+	sendQueue := make(chan []ebpf.SecurityEvent, sendQueueDepth)
+	var senderWg sync.WaitGroup
+	senderWg.Add(1)
+	go a.runBatchSender(sendQueue, &senderWg)
+
 	// Event batch buffer (high-priority events go here directly)
 	eventBatch := make([]ebpf.SecurityEvent, 0, MaxBatchSize)
 	highPriorityCount := 0
 
+	// Aggregated send-side drop counters (queue full). Owned by this
+	// goroutine; reported and reset on the status tick.
+	droppedBatches := 0
+	droppedEvents := 0
+
 	// Deduplicator for non-high-priority events
 	dedup := NewEventDeduplicator(a.log)
+
+	// flush hands the current batch to the async sender without blocking. On
+	// success it allocates a fresh buffer (the sender now owns the old one);
+	// on a full queue the batch is dropped and counted, then the buffer is
+	// reused. While disconnected it holds events (bounded) for the next tick
+	// rather than handing them to a sender that would drop them. Either way
+	// the drain loop keeps consuming eventChan.
+	flush := func(reason string) {
+		if dedupedEvents := dedup.Flush(); len(dedupedEvents) > 0 {
+			eventBatch = append(eventBatch, dedupedEvents...)
+		}
+		if len(eventBatch) == 0 {
+			return
+		}
+		// Hold across a brief outage so a reconnect still surfaces these
+		// events — but cap the retained set so a long outage can't grow
+		// memory without bound (keep the newest, drop+count the overflow).
+		if !a.conn.IsConnected() {
+			if len(eventBatch) > maxHeldEvents {
+				overflow := len(eventBatch) - maxHeldEvents
+				droppedBatches++
+				droppedEvents += overflow
+				eventBatch = append(eventBatch[:0], eventBatch[overflow:]...)
+			}
+			return
+		}
+		select {
+		case sendQueue <- eventBatch:
+			if logger.IsSectionEnabled(logger.SectionEBPF) {
+				a.log.Debug().Msgf("agent.StartEBPFEventSender - %s: queued %d events", reason, len(eventBatch))
+			}
+			eventBatch = make([]ebpf.SecurityEvent, 0, MaxBatchSize)
+		default:
+			droppedBatches++
+			droppedEvents += len(eventBatch)
+			eventBatch = eventBatch[:0]
+		}
+		highPriorityCount = 0
+	}
 
 	for {
 		select {
 		case <-shutdown:
 			a.log.Info().Msg("agent.StartEBPFEventSender - stopping, flushing remaining events")
-			// Flush dedup buffer before final send
-			if dedupedEvents := dedup.Flush(); len(dedupedEvents) > 0 {
-				eventBatch = append(eventBatch, dedupedEvents...)
-			}
-			if len(eventBatch) > 0 && a.conn.IsConnected() {
-				a.sendEventBatch(eventBatch)
-			}
+			flush("shutdown")
+			close(sendQueue)
+			senderWg.Wait()
 			return
 
 		case <-batchTicker.C:
-			// Flush dedup buffer and merge into batch
-			if dedupedEvents := dedup.Flush(); len(dedupedEvents) > 0 {
-				eventBatch = append(eventBatch, dedupedEvents...)
-			}
-
-			// Periodic batch flush
-			if len(eventBatch) > 0 {
-				if a.conn.IsConnected() {
-					if logger.IsSectionEnabled(logger.SectionEBPF) {
-						a.log.Debug().Msgf("agent.StartEBPFEventSender - batch ticker: flushing %d events", len(eventBatch))
-					}
-					a.sendEventBatch(eventBatch)
-					eventBatch = eventBatch[:0] // Reset slice but keep capacity
-					highPriorityCount = 0
-				} else {
-					a.log.Warn().Msgf("agent.StartEBPFEventSender - not connected, holding %d events", len(eventBatch))
-				}
-			}
+			flush("batch ticker")
 
 		case <-statusTicker.C:
 			// Update service status periodically
 			a.updateNativeAgentServiceStatus()
+			if droppedBatches > 0 {
+				a.log.Warn().
+					Int("batches", droppedBatches).
+					Int("events", droppedEvents).
+					Msg("agent.StartEBPFEventSender - send queue saturated, dropping batches (aggregated, last 60s)")
+				droppedBatches = 0
+				droppedEvents = 0
+			}
 
 		case event := <-eventChan:
 			if logger.IsSectionEnabled(logger.SectionEBPF) {
@@ -186,23 +235,21 @@ func (a *agent) StartEBPFEventSender(shutdown chan struct{}, wg *sync.WaitGroup)
 			// Force flush conditions:
 			// 1. Batch is full
 			// 2. Too many high priority events (security-critical)
-			shouldFlush := len(eventBatch) >= MaxBatchSize ||
-				highPriorityCount >= HighPriorityFlushThreshold
-
-			if shouldFlush && a.conn.IsConnected() {
-				// Flush dedup buffer and merge before sending
-				if dedupedEvents := dedup.Flush(); len(dedupedEvents) > 0 {
-					eventBatch = append(eventBatch, dedupedEvents...)
-				}
-				if logger.IsSectionEnabled(logger.SectionEBPF) {
-					a.log.Debug().Msgf("agent.StartEBPFEventSender - force flush: %d events (high_priority=%d)",
-						len(eventBatch), highPriorityCount)
-				}
-				a.sendEventBatch(eventBatch)
-				eventBatch = eventBatch[:0]
-				highPriorityCount = 0
+			if len(eventBatch) >= MaxBatchSize || highPriorityCount >= HighPriorityFlushThreshold {
+				flush("force flush")
 			}
 		}
+	}
+}
+
+// runBatchSender owns the blocking send path (gzip + websocket), draining
+// batches handed off by StartEBPFEventSender. Keeping it off the drain
+// goroutine means endpoint slowness can never back up the native event
+// channel. sendEventBatch already handles the not-connected case internally.
+func (a *agent) runBatchSender(queue <-chan []ebpf.SecurityEvent, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for batch := range queue {
+		a.sendEventBatch(batch)
 	}
 }
 

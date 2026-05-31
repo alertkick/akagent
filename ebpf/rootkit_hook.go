@@ -21,7 +21,7 @@ func (a *NativeEBPFAgent) initRootkitScanner() {
 		select {
 		case a.eventChan <- ev:
 		default:
-			nativeLog.Warn().Msg("Event channel full, dropping rootkit event")
+			a.recordDroppedEvent()
 		}
 	})
 	a.rootkitScanner.Start()

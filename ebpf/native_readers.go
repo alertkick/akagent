@@ -605,7 +605,25 @@ func (a *NativeEBPFAgent) sendEvent(event SecurityEvent) {
 			nativeLog.Debug().Msgf("Sent event: %s (pid=%d, priority=%s)", event.Rule, event.Process.PID, event.Priority)
 		}
 	default:
-		nativeLog.Warn().Msg("Event channel full, dropping event")
+		a.recordDroppedEvent()
+	}
+}
+
+// recordDroppedEvent tallies one event dropped because eventChan was full.
+// The count is logged in aggregate by reportDroppedEvents on the maintenance
+// tick — never per drop — so a saturated channel can't flood the journal.
+func (a *NativeEBPFAgent) recordDroppedEvent() {
+	a.droppedEvents.Add(1)
+}
+
+// reportDroppedEvents emits a single aggregated warning for events dropped
+// since the last call, and resets the counter. No-op when nothing was dropped.
+func (a *NativeEBPFAgent) reportDroppedEvents(window time.Duration) {
+	if n := a.droppedEvents.Swap(0); n > 0 {
+		nativeLog.Warn().
+			Uint64("dropped", n).
+			Dur("window", window).
+			Msg("Event channel saturated — dropping events (aggregated)")
 	}
 }
 
@@ -673,6 +691,7 @@ func (a *NativeEBPFAgent) runCacheCleanup() {
 			return
 		case <-ticker.C:
 			a.enricher.CleanupCache()
+			a.reportDroppedEvents(60 * time.Second)
 			if logger.IsSectionEnabled(logger.SectionEBPF) {
 				containers, namespaces := a.enricher.CacheSize()
 				nativeLog.Debug().Int("containers", containers).Int("namespaces", namespaces).Msg("Cleaned enrichment cache")

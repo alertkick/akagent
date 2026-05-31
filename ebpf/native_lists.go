@@ -573,6 +573,73 @@ func DefaultNativeListConfig() NativeListConfig {
 	}
 }
 
+// ============================= EVENT-SCOPING LISTS =============================
+// Positive watch-sets that decide which file and signal events are worth
+// emitting. They cut high-volume read/benign-signal noise at the source so a
+// busy host doesn't saturate the event channel. These are detection-agnostic
+// path/number lists (the endpoint still does all evaluation); they encode only
+// well-known, public-knowledge sensitive locations and consequential signals.
+// ============================================================================
+
+// AKFileWriteDirs are directories where creating, modifying, deleting, or
+// changing permissions/ownership of a file is security-relevant: system
+// binaries, shared libraries, the boot chain, core configuration, and SSH key
+// stores. File events are emitted for write-type operations under these paths;
+// plain reads here are treated as noise and dropped.
+var AKFileWriteDirs = []string{
+	"/etc",
+	"/bin", "/sbin", "/usr/bin", "/usr/sbin",
+	"/usr/local/bin", "/usr/local/sbin",
+	"/lib", "/lib64", "/usr/lib", "/usr/local/lib",
+	"/boot",
+	"/root/.ssh",
+	"/home/*/.ssh",
+}
+
+// AKSensitiveReadFiles are files whose mere reading is security-relevant —
+// credential, authentication, and private-key material. File events for these
+// are emitted on any operation, including a read-only open, so credential
+// access is visible.
+var AKSensitiveReadFiles = []string{
+	"/etc/shadow",
+	"/etc/gshadow",
+	"/etc/sudoers",
+	"/etc/sudoers.d/*",
+	"/etc/pam.conf",
+	"/etc/pam.d/*",
+	"/etc/security/pwquality.conf",
+	"/root/.ssh/id_*",
+	"/home/*/.ssh/id_*",
+}
+
+// AKConsequentialSignals are the process-signal numbers worth reporting: the
+// terminate/stop/abort signals that can indicate a process being killed to
+// evade or disrupt monitoring. Benign high-frequency signals (child reaping,
+// window resize, timers, urgent data, and the 0 liveness probe) are dropped.
+var AKConsequentialSignals = []int{
+	2,  // SIGINT
+	3,  // SIGQUIT
+	6,  // SIGABRT
+	9,  // SIGKILL
+	15, // SIGTERM
+	19, // SIGSTOP
+}
+
+// DefaultFileMonitorConfig returns the agent's built-in file-event watch-set.
+func DefaultFileMonitorConfig() FileMonitorConfig {
+	return FileMonitorConfig{
+		WriteDirs: append([]string(nil), AKFileWriteDirs...),
+		ReadFiles: append([]string(nil), AKSensitiveReadFiles...),
+	}
+}
+
+// DefaultSignalMonitorConfig returns the agent's built-in signal watch-set.
+func DefaultSignalMonitorConfig() SignalMonitorConfig {
+	return SignalMonitorConfig{
+		EmitSignals: append([]int(nil), AKConsequentialSignals...),
+	}
+}
+
 // BuildExcludeComms returns a composite exclusion map based on config.
 // This merges all enabled exclusion lists into a single map for O(1) lookup.
 func (c *NativeListConfig) BuildExcludeComms() map[string]struct{} {

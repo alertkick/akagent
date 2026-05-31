@@ -125,7 +125,7 @@ func (a *NativeEBPFAgent) emitFIMEvent(ev SecurityEvent) {
 	select {
 	case a.eventChan <- ev:
 	default:
-		nativeLog.Warn().Msg("Event channel full, dropping FIM event")
+		a.recordDroppedEvent()
 	}
 }
 

@@ -33,7 +33,7 @@ func (a *NativeEBPFAgent) initYara() {
 		select {
 		case a.eventChan <- ev:
 		default:
-			nativeLog.Warn().Msg("Event channel full, dropping YARA event")
+			a.recordDroppedEvent()
 		}
 	})
 	a.yaraScanner.Start()
