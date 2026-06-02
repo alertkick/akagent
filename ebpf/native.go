@@ -128,9 +128,12 @@ type NativeEBPFAgent struct {
 	enricher      *EventEnricher
 	sshHydrator   *SSHHydrator
 	sshdConfig    *SSHDConfigReader
-	// sshdConfigCallbacks fire after each successful Refresh. Held
-	// behind mu so callers can register/unregister from any goroutine.
+	// sshdConfigCallbacks fire after each successful Refresh. Guarded by
+	// their own mutex (NOT mu): they are fired from StartEventListener while
+	// it holds mu's write lock, so reusing mu here would self-deadlock (RLock
+	// while the same goroutine holds Lock — RWMutex is not reentrant).
 	sshdConfigCallbacks []func(*SSHDConfig)
+	sshdCbMu            sync.Mutex
 	eventChan     chan SecurityEvent
 	// droppedEvents counts events discarded because eventChan was full,
 	// aggregated and logged once per maintenance tick instead of one WRN
@@ -259,15 +262,19 @@ func (a *NativeEBPFAgent) SSHDConfigSnapshot() *SSHDConfig {
 // here so the LSM blocker's port-set map tracks sshd Port directive
 // changes without an agent restart.
 func (a *NativeEBPFAgent) OnSSHDConfigRefresh(cb func(*SSHDConfig)) {
-	a.mu.Lock()
+	a.sshdCbMu.Lock()
 	a.sshdConfigCallbacks = append(a.sshdConfigCallbacks, cb)
-	a.mu.Unlock()
+	a.sshdCbMu.Unlock()
 }
 
+// fireSSHDConfigCallbacks snapshots the callbacks under their own mutex and
+// invokes them with no lock held. It must not take a.mu: StartEventListener
+// fires it while holding a.mu's write lock, and re-entering a.mu would
+// deadlock (RWMutex is not reentrant).
 func (a *NativeEBPFAgent) fireSSHDConfigCallbacks(snap *SSHDConfig) {
-	a.mu.RLock()
+	a.sshdCbMu.Lock()
 	cbs := append([]func(*SSHDConfig){}, a.sshdConfigCallbacks...)
-	a.mu.RUnlock()
+	a.sshdCbMu.Unlock()
 	for _, cb := range cbs {
 		cb(snap)
 	}

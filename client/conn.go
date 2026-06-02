@@ -49,6 +49,14 @@ func backoffDelay(current time.Duration) time.Duration {
 	return jitter
 }
 
+// serverReqChanBuffer bounds the inbound server-request queue. The
+// message-processing loop also delivers responses (e.g. heartbeat pongs),
+// so it must never block handing a request to the consumer — otherwise a
+// slow or wedged command handler stalls response delivery and the
+// connection is torn down by heartbeat timeouts. A generous buffer plus a
+// non-blocking enqueue keeps the read path live regardless of handler speed.
+const serverReqChanBuffer = 256
+
 type Connection struct {
 	agentID            string
 	agentName          string
@@ -130,7 +138,7 @@ func NewConnectionForEndpoint(conf *config.Config, endpoint string, log zerolog.
 		messageChan:       make(chan []byte),
 		responseChan:      make(chan Response),
 		requests:          make(map[string]chan Response),
-		ServerReqChan:     make(chan Request),
+		ServerReqChan:     make(chan Request, serverReqChanBuffer),
 		timeout:           20,
 		log:               agentLog,
 		version:           version,
@@ -285,6 +293,14 @@ func (c *Connection) generateRequestID() string {
 }
 
 func (c *Connection) SendJSONMessage(req *Request) (string, chan Response, error) {
+	// Never write on a connection that isn't fully established: c.conn is nil
+	// before the first successful dial and during reconnects, so writing would
+	// nil-deref inside crypto/tls. Callers (e.g. the lockdown reporter) treat
+	// ErrNotConnected as retryable rather than fatal.
+	if c.State() != StateConnected || c.conn == nil {
+		return "0", nil, ErrNotConnected
+	}
+
 	requestID := c.generateRequestID()
 	req.ID = requestID
 
@@ -334,6 +350,12 @@ func (c *Connection) SendJSONMessage(req *Request) (string, chan Response, error
 
 // SendJSONMessageNoResponse sends a JSON message without expecting a response
 func (c *Connection) SendJSONMessageNoResponse(msg Response) error {
+	// Guard against writing on an unestablished/reconnecting connection
+	// (nil c.conn) — see SendJSONMessage.
+	if c.State() != StateConnected || c.conn == nil {
+		return ErrNotConnected
+	}
+
 	jsonData, err := json.Marshal(msg)
 	if err != nil {
 		c.log.Err(err).Msg("[SEND] Error marshalling response")
@@ -514,8 +536,20 @@ func (c *Connection) processMessageBytes(data []byte) error {
 				Str("correlation_id", req.CorrelationID).
 				Msg("[RECV] request, forwarding to handler")
 		}
-		// It's a request, add it to serverReqChan.
-		c.ServerReqChan <- req
+		// It's a request, hand it to the consumer. This must never block:
+		// this same loop delivers responses (heartbeat pongs), so blocking
+		// here on a slow/wedged handler would starve heartbeat replies and
+		// get the connection torn down. The buffer absorbs normal bursts; if
+		// it is somehow full we drop the request (it will time out and can be
+		// retried) rather than stall the read path and kill the connection.
+		select {
+		case c.ServerReqChan <- req:
+		default:
+			c.log.Warn().
+				Str("id", req.ID).
+				Str("method", req.Method).
+				Msg("Connection.processMessageBytes - ServerReqChan full, dropping request to keep the connection responsive")
+		}
 	}
 
 	return nil
