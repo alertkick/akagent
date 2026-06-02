@@ -19,14 +19,28 @@ func loginEvent(shellPID int, ip, user string) *SecurityEvent {
 	return &SecurityEvent{
 		AgentType: AgentTypeNative,
 		Timestamp: time.Now(),
-		Rule:      "Process Clone",
+		Rule:      "Process Execution",
 		Category:  "process",
-		Process:   ProcessInfo{PID: shellPID, Name: "bash", Username: user, TTY: 1},
+		Process:   ProcessInfo{PID: shellPID, Name: "bash", ExePath: "/usr/bin/bash", Username: user, TTY: 1},
 		RawFields: map[string]interface{}{
 			"ssh_login":     true,
 			"ssh_source_ip": ip,
 			"ssh_username":  user,
 		},
+	}
+}
+
+// sshdWorkerClone mimics the intermediate sshd worker process events the
+// hydrator also stamps ssh_login on (parent=sshd, not a real shell). These
+// must NOT open a session, else one login records several sessions.
+func sshdWorkerClone(pid int) *SecurityEvent {
+	return &SecurityEvent{
+		AgentType: AgentTypeNative,
+		Timestamp: time.Now(),
+		Rule:      "Process Clone",
+		Category:  "process",
+		Process:   ProcessInfo{PID: pid, Name: "sshd", ExePath: "/usr/sbin/sshd"},
+		RawFields: map[string]interface{}{"ssh_login": true},
 	}
 }
 
@@ -71,6 +85,55 @@ func TestSSHSession_StartRewritesEvent(t *testing.T) {
 	}
 	if len(tr.sessions) != 1 {
 		t.Fatalf("sessions = %d, want 1", len(tr.sessions))
+	}
+}
+
+func TestSSHSession_OnlyShellExecveStartsSession(t *testing.T) {
+	tr := NewSSHSessionTracker()
+	cache := testCache(map[uint32]*ProcessCacheEntry{
+		2000: {PID: 2000, StartTimeNS: 1},
+		2001: {PID: 2001, StartTimeNS: 2},
+		1000: {PID: 1000, StartTimeNS: 111},
+	})
+
+	// sshd worker clones (stamped ssh_login by the hydrator) must not start sessions.
+	tr.OnEvent(sshdWorkerClone(2000), cache, false)
+	tr.OnEvent(sshdWorkerClone(2001), cache, false)
+	// The shell's pre-exec clone (also ssh_login-stamped) must not start one either.
+	cloneOfShell := &SecurityEvent{
+		AgentType: AgentTypeNative, Timestamp: time.Now(), Rule: "Process Clone", Category: "process",
+		Process:   ProcessInfo{PID: 1000, Name: "sshd"},
+		RawFields: map[string]interface{}{"ssh_login": true},
+	}
+	tr.OnEvent(cloneOfShell, cache, false)
+	if len(tr.sessions) != 0 {
+		t.Fatalf("clones/workers started %d sessions, want 0", len(tr.sessions))
+	}
+
+	// Only the shell's execve opens exactly one session.
+	tr.OnEvent(loginEvent(1000, "10.0.0.1", "root"), cache, false)
+	if len(tr.sessions) != 1 {
+		t.Fatalf("shell execve produced %d sessions, want 1", len(tr.sessions))
+	}
+}
+
+func TestSSHSession_DeterministicIDSurvivesRestart(t *testing.T) {
+	cache := testCache(map[uint32]*ProcessCacheEntry{1000: {PID: 1000, StartTimeNS: 111}})
+
+	// First agent run.
+	trA := NewSSHSessionTracker()
+	evA := loginEvent(1000, "10.0.0.1", "root")
+	trA.OnEvent(evA, cache, false)
+	idA := evA.RawFields["ssh_session_id"].(string)
+
+	// Agent restarts: fresh tracker, same shell re-detected (same pid+startNS).
+	trB := NewSSHSessionTracker()
+	evB := loginEvent(1000, "10.0.0.1", "root")
+	trB.OnEvent(evB, cache, false)
+	idB := evB.RawFields["ssh_session_id"].(string)
+
+	if idA == "" || idA != idB {
+		t.Fatalf("session id not stable across restart: %q vs %q", idA, idB)
 	}
 }
 

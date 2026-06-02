@@ -3,12 +3,14 @@
 package ebpf
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
-
-	"github.com/rs/xid"
 )
 
 // SSHSessionTracker turns an inbound SSH login into a long-lived "session"
@@ -109,18 +111,42 @@ func (t *SSHSessionTracker) OnEvent(event *SecurityEvent, cache *ProcessCache, c
 	}
 }
 
-// isSSHLoginShellEvent reports whether the SSH hydrator already classified this
-// event as an sshd-spawned login shell (it stamps ssh_login=true on the shell's
-// own clone/exec event).
+// isSSHLoginShellEvent reports whether this event is the interactive login
+// shell opening an SSH session.
+//
+// The SSH hydrator stamps ssh_login=true generously — including on the
+// intermediate sshd worker processes (parent=sshd, empty cmdline) that fork
+// before the user's shell, and on the shell's pre-exec clone. Starting a
+// session on any of those would record several sessions for one login. So we
+// open a session only on the shell's own execve, identified by the process
+// being a real interactive shell. Clone events (and the sshd workers) are
+// ignored for session-start; the shell's children are picked up by attribute.
 func isSSHLoginShellEvent(event *SecurityEvent) bool {
 	if v, _ := event.RawFields["ssh_login"].(bool); !v {
 		return false
 	}
-	switch event.Rule {
-	case "Process Clone", "Process Execution":
+	if event.Rule != "Process Execution" {
+		return false
+	}
+	return isInteractiveShellName(event.Process.Name) || isInteractiveShellName(baseName(event.Process.ExePath))
+}
+
+// isInteractiveShellName reports whether a process name/exe basename is a
+// common interactive login shell (mirrors the set isLoginShellCmdline uses).
+func isInteractiveShellName(name string) bool {
+	name = strings.TrimPrefix(name, "-") // login shells set argv[0] to "-bash"
+	switch name {
+	case "bash", "sh", "zsh", "dash", "fish", "ash", "ksh":
 		return true
 	}
 	return false
+}
+
+func baseName(p string) string {
+	if idx := strings.LastIndex(p, "/"); idx >= 0 {
+		return p[idx+1:]
+	}
+	return p
 }
 
 // startSession opens (or no-ops on an already-open) session for the login
@@ -143,7 +169,7 @@ func (t *SSHSessionTracker) startSession(event *SecurityEvent, cache *ProcessCac
 			return
 		}
 		st = &sshSessionState{
-			sessionID:    xid.New().String(),
+			sessionID:    deterministicSessionID(shellPID, key.startNS),
 			anchorPID:    shellPID,
 			startNS:      key.startNS,
 			sourceIP:     rawString(event.RawFields, "ssh_source_ip"),
@@ -379,6 +405,32 @@ func rawString(m map[string]interface{}, k string) string {
 	}
 	s, _ := m[k].(string)
 	return s
+}
+
+var (
+	hostnameOnce sync.Once
+	cachedHost   string
+)
+
+func hostname() string {
+	hostnameOnce.Do(func() {
+		if h, err := os.Hostname(); err == nil {
+			cachedHost = h
+		}
+	})
+	return cachedHost
+}
+
+// deterministicSessionID derives a stable session id from the host and the
+// shell's identity (pid + kernel start time). Because it's a pure function of
+// the shell — not of the moment we detected it — re-detecting the same shell
+// (e.g. a buffered event replayed after an agent restart) yields the same id,
+// so the API upsert updates the same session document instead of creating a
+// duplicate. pid+startNS is unique per process on a host; the hostname guards
+// against collisions across hosts in a tenant.
+func deterministicSessionID(pid uint32, startNS uint64) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%d", hostname(), pid, startNS)))
+	return "sshsess-" + hex.EncodeToString(sum[:12])
 }
 
 // ── argv redaction ──────────────────────────────────────────────────────────
