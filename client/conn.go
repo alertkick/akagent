@@ -293,11 +293,13 @@ func (c *Connection) generateRequestID() string {
 }
 
 func (c *Connection) SendJSONMessage(req *Request) (string, chan Response, error) {
-	// Never write on a connection that isn't fully established: c.conn is nil
-	// before the first successful dial and during reconnects, so writing would
-	// nil-deref inside crypto/tls. Callers (e.g. the lockdown reporter) treat
-	// ErrNotConnected as retryable rather than fatal.
-	if c.State() != StateConnected || c.conn == nil {
+	// Guard only against a nil socket: c.conn is nil before the first
+	// successful dial and during reconnects, so writing would nil-deref inside
+	// crypto/tls. We must NOT also require StateConnected here — the handshake
+	// runs while the connection is still StateConnecting (state only flips to
+	// Connected after a successful handshake), and it sends through this method.
+	// Callers (e.g. the lockdown reporter) treat ErrNotConnected as retryable.
+	if c.conn == nil {
 		return "0", nil, ErrNotConnected
 	}
 
@@ -350,9 +352,9 @@ func (c *Connection) SendJSONMessage(req *Request) (string, chan Response, error
 
 // SendJSONMessageNoResponse sends a JSON message without expecting a response
 func (c *Connection) SendJSONMessageNoResponse(msg Response) error {
-	// Guard against writing on an unestablished/reconnecting connection
-	// (nil c.conn) — see SendJSONMessage.
-	if c.State() != StateConnected || c.conn == nil {
+	// Guard against a nil socket only (not connected-state) — see
+	// SendJSONMessage for why the handshake needs sends while StateConnecting.
+	if c.conn == nil {
 		return ErrNotConnected
 	}
 
