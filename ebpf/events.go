@@ -86,21 +86,21 @@ func (p PriorityLevel) MarshalJSON() ([]byte, error) {
 
 // ProcessInfo contains information about the process that triggered the event
 type ProcessInfo struct {
-	PID         int    `json:"pid,omitempty"`
-	PPID        int    `json:"ppid,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Cmdline     string `json:"cmdline,omitempty"`
-	ExePath     string `json:"exe_path,omitempty"`
-	UID         int    `json:"uid,omitempty"`
-	Username    string `json:"username,omitempty"`
-	LoginUID    int    `json:"login_uid,omitempty"`
-	TTY         int    `json:"tty,omitempty"`
-	ParentName  string `json:"parent_name,omitempty"`
+	PID             int    `json:"pid,omitempty"`
+	PPID            int    `json:"ppid,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Cmdline         string `json:"cmdline,omitempty"`
+	ExePath         string `json:"exe_path,omitempty"`
+	UID             int    `json:"uid,omitempty"`
+	Username        string `json:"username,omitempty"`
+	LoginUID        int    `json:"login_uid,omitempty"`
+	TTY             int    `json:"tty,omitempty"`
+	ParentName      string `json:"parent_name,omitempty"`
 	ParentExe       string `json:"parent_exe,omitempty"`
 	GrandparentPID  int    `json:"grandparent_pid,omitempty"`
 	GrandparentName string `json:"grandparent_name,omitempty"`
 	Cwd             string `json:"cwd,omitempty"`
-	Capabilities string `json:"capabilities,omitempty"`
+	Capabilities    string `json:"capabilities,omitempty"`
 }
 
 // ContainerInfo contains information about the container context
@@ -125,16 +125,16 @@ type KubernetesInfo struct {
 
 // NetworkInfo contains network-related event information
 type NetworkInfo struct {
-	Protocol       string `json:"protocol,omitempty"`
-	SrcIP          string `json:"src_ip,omitempty"`
-	SrcPort        int    `json:"src_port,omitempty"`
-	DstIP          string `json:"dst_ip,omitempty"`
-	DstPort        int    `json:"dst_port,omitempty"`
-	Direction      string `json:"direction,omitempty"` // inbound, outbound
-	BytesSent      int64  `json:"bytes_sent,omitempty"`
-	BytesReceived  int64  `json:"bytes_received,omitempty"`
-	DNSQuery       string `json:"dns_query,omitempty"`
-	DNSResponse    string `json:"dns_response,omitempty"`
+	Protocol      string `json:"protocol,omitempty"`
+	SrcIP         string `json:"src_ip,omitempty"`
+	SrcPort       int    `json:"src_port,omitempty"`
+	DstIP         string `json:"dst_ip,omitempty"`
+	DstPort       int    `json:"dst_port,omitempty"`
+	Direction     string `json:"direction,omitempty"` // inbound, outbound
+	BytesSent     int64  `json:"bytes_sent,omitempty"`
+	BytesReceived int64  `json:"bytes_received,omitempty"`
+	DNSQuery      string `json:"dns_query,omitempty"`
+	DNSResponse   string `json:"dns_response,omitempty"`
 }
 
 // FileInfo contains file-related event information
@@ -177,7 +177,7 @@ type SecurityEvent struct {
 	Tags    []string `json:"tags,omitempty"`
 
 	// Context information
-	Hostname  string `json:"hostname,omitempty"`
+	Hostname  string         `json:"hostname,omitempty"`
 	Process   ProcessInfo    `json:"process,omitempty"`
 	Container ContainerInfo  `json:"container,omitempty"`
 	K8s       KubernetesInfo `json:"k8s,omitempty"`
@@ -192,7 +192,6 @@ type SecurityEvent struct {
 	AggregatedCount int        `json:"aggregated_count,omitempty"`
 	FirstOccurrence *time.Time `json:"first_occurrence,omitempty"`
 	LastOccurrence  *time.Time `json:"last_occurrence,omitempty"`
-
 }
 
 // String returns a JSON string representation of the event
@@ -248,16 +247,30 @@ func (e SecurityEvent) HasFileContext() bool {
 	return e.File.Path != "" || e.File.Name != ""
 }
 
+// RuleSSHInboundLogin is the rule name for a tracked inbound SSH login
+// session (distinct from "SSH Process Execution", which is an ssh/scp/sftp
+// binary being run). Emitted and periodically re-emitted by SSHSessionTracker.
+const RuleSSHInboundLogin = "SSH Inbound Login"
+
 // DeduplicationKey returns a string key for grouping duplicate events.
 // Events with the same rule and process name/parent pattern are considered duplicates.
 func (e SecurityEvent) DeduplicationKey() string {
+	// SSH session events are keyed on their session id, not the process
+	// name/parent pattern. Each live session re-emits under the same uuid
+	// (the API upserts on it); two concurrent sessions share the Rule string
+	// and would otherwise collapse into one dedup bucket and lose updates.
+	if kind, _ := e.RawFields["event_kind"].(string); kind == "ssh_session" {
+		if sid, _ := e.RawFields["ssh_session_id"].(string); sid != "" {
+			return "ssh_session|" + sid
+		}
+	}
 	return e.Rule + "|" + e.Process.Name + "|" + e.Process.ParentName
 }
 
 // EventBuffer provides a thread-safe buffer for events
 type EventBuffer struct {
-	events   []SecurityEvent
-	maxSize  int
+	events  []SecurityEvent
+	maxSize int
 }
 
 // NewEventBuffer creates a new event buffer with the specified max size

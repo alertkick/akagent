@@ -130,6 +130,17 @@ type NativeConfig struct {
 	// SignalMonitor scopes which process-signal events are emitted to the
 	// consequential signal numbers, dropping benign high-frequency signals.
 	SignalMonitor SignalMonitorConfig `yaml:"signal_monitor"`
+
+	// SSHSessionCommandCapture controls whether tracked SSH login sessions
+	// record the command line of each process run during the session.
+	//
+	// Off by default for privacy: command-line arguments can contain secrets
+	// (e.g. `mysql -pSECRET`, bearer tokens). When off, a session still
+	// records its lifecycle (who, source IP, login/logout, duration) and a
+	// numeric count of processes started — never argv. When on, each process
+	// is captured with its command line REDACTED at the source (known secret
+	// patterns masked before the event leaves the host). See SSHSessionTracker.
+	SSHSessionCommandCapture bool `yaml:"ssh_session_command_capture,omitempty"`
 }
 
 // FileMonitorConfig scopes file-event emission to security-relevant paths.
@@ -268,8 +279,8 @@ func DefaultNativeConfig() NativeConfig {
 		FilterComms: nil,
 		ExcludeComms: []string{
 			// Container runtimes (legitimate setuid/privilege operations)
-			"runc",        // Matches runc:[0:PARE], runc:[1:CHIL], runc:[2:INIT], etc.
-			"containerd",  // Matches containerd-shim as well
+			"runc",       // Matches runc:[0:PARE], runc:[1:CHIL], runc:[2:INIT], etc.
+			"containerd", // Matches containerd-shim as well
 			"dockerd",
 			"docker-proxy",
 			"crio",

@@ -422,6 +422,16 @@ func (a *NativeEBPFAgent) StartEventListener(ctx context.Context) error {
 		}()
 	}
 
+	// Start the SSH login session heartbeat (re-emits live sessions, closes
+	// idle/exited ones).
+	if a.sshSessionTracker != nil {
+		a.readerWg.Add(1)
+		go func() {
+			defer a.readerWg.Done()
+			a.runSSHSessionHeartbeat()
+		}()
+	}
+
 	nativeLog.Info().Msg("Native eBPF event listener started")
 	return nil
 }
@@ -571,6 +581,14 @@ func (a *NativeEBPFAgent) sendEvent(event SecurityEvent) {
 	// is fine.
 	if a.sshHydrator != nil {
 		a.sshHydrator.HydrateSSHLogin(&event)
+	}
+
+	// Track inbound SSH login sessions: open a session on the login shell
+	// (which the hydrator just stamped), and attribute processes run beneath
+	// it. Runs after the hydrator so it sees ssh_login/ssh_source_ip. The
+	// command-capture toggle gates whether argv is recorded (redacted).
+	if a.sshSessionTracker != nil {
+		a.sshSessionTracker.OnEvent(&event, a.processCache, a.GetNativeConfig().SSHSessionCommandCapture)
 	}
 
 	// For network events, stamp is_ssh_port=true when src/dst port matches
@@ -753,6 +771,45 @@ func (a *NativeEBPFAgent) runSSHDConfigRefresh() {
 					nativeLog.Debug().Ints("ports", snap.Ports).Msg("sshd_config refreshed")
 				}
 				a.fireSSHDConfigCallbacks(snap)
+			}
+		}
+	}
+}
+
+// runSSHSessionHeartbeat periodically re-emits each tracked SSH login session
+// so its lifecycle (process count, last activity, and eventual logout/duration)
+// stays current on the dashboard — the API upserts these on the session uuid.
+// Closed sessions are evicted by sweep. Panic-recovered so a bug in session
+// bookkeeping can never take down the agent (the 1.7.x serial-consumer lesson).
+func (a *NativeEBPFAgent) runSSHSessionHeartbeat() {
+	defer func() {
+		if r := recover(); r != nil {
+			nativeLog.Error().Interface("panic", r).Msg("SSH session heartbeat panicked; sessions will not refresh until restart")
+		}
+	}()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-a.shutdownChan:
+			return
+		case <-ticker.C:
+			if a.sshSessionTracker == nil {
+				continue
+			}
+			capture := a.GetNativeConfig().SSHSessionCommandCapture
+			events := a.sshSessionTracker.sweep(time.Now(), a.processCache, capture)
+			for i := range events {
+				// Emit directly to the channel (non-blocking, same backpressure
+				// as sendEvent) — these are synthetic audit events and must not
+				// run the source filters that drop ordinary noise.
+				select {
+				case a.eventChan <- events[i]:
+				default:
+					a.recordDroppedEvent()
+				}
 			}
 		}
 	}

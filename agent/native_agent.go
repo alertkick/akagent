@@ -234,6 +234,9 @@ func convertWebConfigToNative(webConfig client.NativeAgentConfig) ebpf.NativeCon
 		config.SignalMonitor = ebpf.SignalMonitorConfig{EmitSignals: sm.EmitSignals}
 	}
 
+	// Per-server opt-in: capture (redacted) command lines for SSH sessions.
+	config.SSHSessionCommandCapture = webConfig.SSHSessionCommandCapture
+
 	return config
 }
 
@@ -288,6 +291,7 @@ func convertNativeConfigToWeb(config ebpf.NativeConfig) client.NativeAgentConfig
 		SignalMonitor: &client.NativeSignalMonitorConfig{
 			EmitSignals: config.SignalMonitor.EmitSignals,
 		},
+		SSHSessionCommandCapture: config.SSHSessionCommandCapture,
 	}
 
 	return webConfig
@@ -710,4 +714,3 @@ func (a *agent) sendRefreshComplianceResponse(req client.Request, response clien
 		a.log.Err(err).Msg("agent.sendRefreshComplianceResponse - error sending response")
 	}
 }
-

@@ -56,20 +56,20 @@ const (
 	EventTypeUtimes      = 25
 
 	// Compliance event types
-	EventTypeSetuid       = 20
-	EventTypeSetgid       = 21
-	EventTypeSetreuid     = 22
-	EventTypeSetregid     = 23
-	EventTypeMount        = 30
-	EventTypeUmount       = 31
-	EventTypeInitModule   = 40
-	EventTypeFinitModule  = 41
-	EventTypeDeleteModule = 42
-	EventTypeMprotect     = 50
-	EventTypeMmap         = 51
-	EventTypeDNSQuery     = 60
-	EventTypeIMDSAccess   = 61
-	EventTypeBPFCmd       = 70
+	EventTypeSetuid          = 20
+	EventTypeSetgid          = 21
+	EventTypeSetreuid        = 22
+	EventTypeSetregid        = 23
+	EventTypeMount           = 30
+	EventTypeUmount          = 31
+	EventTypeInitModule      = 40
+	EventTypeFinitModule     = 41
+	EventTypeDeleteModule    = 42
+	EventTypeMprotect        = 50
+	EventTypeMmap            = 51
+	EventTypeDNSQuery        = 60
+	EventTypeIMDSAccess      = 61
+	EventTypeBPFCmd          = 70
 	EventTypeMemfdCreate     = 71
 	EventTypeExecveat        = 72
 	EventTypeIoUringSetup    = 80
@@ -89,10 +89,10 @@ const (
 	EventTypeSetfsgid  = 98
 
 	// Extended file events
-	EventTypeOpenat2        = 100
-	EventTypeOpenByHandle   = 101
-	EventTypeTruncate       = 102
-	EventTypeFtruncate      = 103
+	EventTypeOpenat2      = 100
+	EventTypeOpenByHandle = 101
+	EventTypeTruncate     = 102
+	EventTypeFtruncate    = 103
 
 	// Data exfiltration events
 	EventTypeSplice        = 110
@@ -119,22 +119,23 @@ const (
 
 // NativeEBPFAgent implements the EBPFAgent interface using native BPF programs
 type NativeEBPFAgent struct {
-	mu            sync.RWMutex
-	config        NativeConfig
-	configPath    string
-	filter        *EventFilter
-	alertFilter   *AlertFilter
-	rateLimiter   *RateLimiter
-	enricher      *EventEnricher
-	sshHydrator   *SSHHydrator
-	sshdConfig    *SSHDConfigReader
+	mu                sync.RWMutex
+	config            NativeConfig
+	configPath        string
+	filter            *EventFilter
+	alertFilter       *AlertFilter
+	rateLimiter       *RateLimiter
+	enricher          *EventEnricher
+	sshHydrator       *SSHHydrator
+	sshSessionTracker *SSHSessionTracker
+	sshdConfig        *SSHDConfigReader
 	// sshdConfigCallbacks fire after each successful Refresh. Guarded by
 	// their own mutex (NOT mu): they are fired from StartEventListener while
 	// it holds mu's write lock, so reusing mu here would self-deadlock (RLock
 	// while the same goroutine holds Lock — RWMutex is not reentrant).
 	sshdConfigCallbacks []func(*SSHDConfig)
 	sshdCbMu            sync.Mutex
-	eventChan     chan SecurityEvent
+	eventChan           chan SecurityEvent
 	// droppedEvents counts events discarded because eventChan was full,
 	// aggregated and logged once per maintenance tick instead of one WRN
 	// line per drop (which could bury the journal under saturation).
@@ -159,14 +160,14 @@ type NativeEBPFAgent struct {
 	procForkLink     link.Link
 
 	// BPF objects for each program
-	execveObjs    *bpfgen.ExecveObjects
-	fileopsObjs   *bpfgen.FileopsObjects
-	networkObjs   *bpfgen.NetworkObjects
-	processObjs   *bpfgen.ProcessObjects
-	privilegeObjs *bpfgen.PrivilegeObjects
-	mountObjs     *bpfgen.MountObjects
-	moduleObjs    *bpfgen.ModuleObjects
-	memoryObjs    *bpfgen.MemoryObjects
+	execveObjs     *bpfgen.ExecveObjects
+	fileopsObjs    *bpfgen.FileopsObjects
+	networkObjs    *bpfgen.NetworkObjects
+	processObjs    *bpfgen.ProcessObjects
+	privilegeObjs  *bpfgen.PrivilegeObjects
+	mountObjs      *bpfgen.MountObjects
+	moduleObjs     *bpfgen.ModuleObjects
+	memoryObjs     *bpfgen.MemoryObjects
 	dnsObjs        *bpfgen.DnsObjects
 	imdsObjs       *bpfgen.ImdsObjects
 	bpfsyscallObjs *bpfgen.BpfsyscallObjects
@@ -181,14 +182,14 @@ type NativeEBPFAgent struct {
 	ioctlObjs      *bpfgen.IoctlObjects
 
 	// Perf variant BPF objects (used when outputMode == OutputModePerf)
-	perfExecveObjs    *bpfgen.PerfexecveObjects
-	perfFileopsObjs   *bpfgen.PerffileopsObjects
-	perfNetworkObjs   *bpfgen.PerfnetworkObjects
-	perfProcessObjs   *bpfgen.PerfprocessObjects
-	perfPrivilegeObjs *bpfgen.PerfprivilegeObjects
-	perfMountObjs     *bpfgen.PerfmountObjects
-	perfModuleObjs    *bpfgen.PerfmoduleObjects
-	perfMemoryObjs    *bpfgen.PerfmemoryObjects
+	perfExecveObjs     *bpfgen.PerfexecveObjects
+	perfFileopsObjs    *bpfgen.PerffileopsObjects
+	perfNetworkObjs    *bpfgen.PerfnetworkObjects
+	perfProcessObjs    *bpfgen.PerfprocessObjects
+	perfPrivilegeObjs  *bpfgen.PerfprivilegeObjects
+	perfMountObjs      *bpfgen.PerfmountObjects
+	perfModuleObjs     *bpfgen.PerfmoduleObjects
+	perfMemoryObjs     *bpfgen.PerfmemoryObjects
 	perfDnsObjs        *bpfgen.PerfdnsObjects
 	perfImdsObjs       *bpfgen.PerfimdsObjects
 	perfBpfsyscallObjs *bpfgen.PerfbpfsyscallObjects
@@ -206,14 +207,14 @@ type NativeEBPFAgent struct {
 	links []link.Link
 
 	// Event readers (wraps either ringbuf.Reader or perf.Reader)
-	execveReader    EventReader
-	fileopsReader   EventReader
-	networkReader   EventReader
-	processReader   EventReader
-	privilegeReader EventReader
-	mountReader     EventReader
-	moduleReader    EventReader
-	memoryReader    EventReader
+	execveReader     EventReader
+	fileopsReader    EventReader
+	networkReader    EventReader
+	processReader    EventReader
+	privilegeReader  EventReader
+	mountReader      EventReader
+	moduleReader     EventReader
+	memoryReader     EventReader
 	dnsReader        EventReader
 	imdsReader       EventReader
 	bpfsyscallReader EventReader
@@ -318,20 +319,21 @@ func NewNativeAgentWithConfig(configPath string) (*NativeEBPFAgent, error) {
 	}
 
 	agent := &NativeEBPFAgent{
-		config:        config,
-		configPath:    configPath,
-		filter:        NewEventFilter(&config),
-		alertFilter:   NewAlertFilterWithLists(&config.AlertFilter, &config.NativeLists),
-		rateLimiter:   NewRateLimiter(config.RateLimiter),
-		enricher:      enricher,
-		sshHydrator:   NewSSHHydrator(),
-		sshdConfig:    NewSSHDConfigReader(),
-		eventChan:     make(chan SecurityEvent, channelBufferSize),
-		shutdownChan:  make(chan struct{}),
-		kernelSupport: support,
-		outputMode:    support.OutputMode(),
-		pinManager:    NewBPFPinManager(),
-		discarders:    NewDiscarderManager(),
+		config:            config,
+		configPath:        configPath,
+		filter:            NewEventFilter(&config),
+		alertFilter:       NewAlertFilterWithLists(&config.AlertFilter, &config.NativeLists),
+		rateLimiter:       NewRateLimiter(config.RateLimiter),
+		enricher:          enricher,
+		sshHydrator:       NewSSHHydrator(),
+		sshSessionTracker: NewSSHSessionTracker(),
+		sshdConfig:        NewSSHDConfigReader(),
+		eventChan:         make(chan SecurityEvent, channelBufferSize),
+		shutdownChan:      make(chan struct{}),
+		kernelSupport:     support,
+		outputMode:        support.OutputMode(),
+		pinManager:        NewBPFPinManager(),
+		discarders:        NewDiscarderManager(),
 	}
 
 	nativeLog.Info().Str("output_mode", agent.outputMode.String()).Msg("Selected BPF output mode")
@@ -639,4 +641,3 @@ func (a *NativeEBPFAgent) GetKernelSupport() KernelSupport {
 func (a *NativeEBPFAgent) GetDiscarderStats() DiscarderStats {
 	return a.discarders.GetStats()
 }
-
