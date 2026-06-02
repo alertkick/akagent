@@ -121,6 +121,36 @@ type NativeConfig struct {
 	// raises a finding when a monitored file's content changes. Requires
 	// EnableFile (file events) to be active.
 	FileIntegrity FileIntegrityConfig `yaml:"file_integrity"`
+
+	// ---- Event Scoping ----
+	// FileMonitor scopes which file events are emitted to security-relevant
+	// paths, so high-volume reads/writes elsewhere are dropped at the source.
+	FileMonitor FileMonitorConfig `yaml:"file_monitor"`
+
+	// SignalMonitor scopes which process-signal events are emitted to the
+	// consequential signal numbers, dropping benign high-frequency signals.
+	SignalMonitor SignalMonitorConfig `yaml:"signal_monitor"`
+}
+
+// FileMonitorConfig scopes file-event emission to security-relevant paths.
+// When either list is non-empty, a file event is emitted only when it matches:
+// a write-type operation under a WriteDir, or any operation (including a
+// read-only open) on a ReadFile. Every other file event is dropped at the
+// source. Both lists empty disables scoping (all file events that pass the
+// other filters are emitted). The lists are the agent's own defaults and can
+// be overridden per server by the endpoint. Entries are directory prefixes or
+// shell globs (e.g. "/home/*/.ssh"); evaluation is the endpoint's job — these
+// only decide what the sensor reports.
+type FileMonitorConfig struct {
+	WriteDirs []string `yaml:"write_dirs,omitempty"`
+	ReadFiles []string `yaml:"read_files,omitempty"`
+}
+
+// SignalMonitorConfig scopes process-signal emission. When EmitSignals is
+// non-empty, only those signal numbers are reported; all other signals are
+// dropped at the source. Empty means emit all signals.
+type SignalMonitorConfig struct {
+	EmitSignals []int `yaml:"emit_signals,omitempty"`
 }
 
 // FileIntegrityConfig controls checksum-based file integrity monitoring.
@@ -317,6 +347,11 @@ func DefaultNativeConfig() NativeConfig {
 
 		// File integrity monitoring (off until enabled via profile/config)
 		FileIntegrity: DefaultFileIntegrityConfig(),
+
+		// Scope file and signal events to security-relevant activity so a
+		// busy host doesn't drown the channel in read noise.
+		FileMonitor:   DefaultFileMonitorConfig(),
+		SignalMonitor: DefaultSignalMonitorConfig(),
 	}
 }
 
@@ -478,6 +513,15 @@ func MergeConfig(local, endpoint NativeConfig) NativeConfig {
 	}
 	if merged.EventChannelSize == 0 {
 		merged.EventChannelSize = local.EventChannelSize
+	}
+
+	// Keep local event-scoping defaults if the endpoint doesn't push its own,
+	// so a host that hasn't received a profile still scopes file/signal noise.
+	if len(merged.FileMonitor.WriteDirs) == 0 && len(merged.FileMonitor.ReadFiles) == 0 {
+		merged.FileMonitor = local.FileMonitor
+	}
+	if len(merged.SignalMonitor.EmitSignals) == 0 {
+		merged.SignalMonitor = local.SignalMonitor
 	}
 
 	return merged

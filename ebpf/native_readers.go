@@ -397,6 +397,10 @@ func (a *NativeEBPFAgent) StartEventListener(ctx context.Context) error {
 	// Start cache cleanup goroutine
 	go a.runCacheCleanup()
 
+	// Keep the container-name inventory warm so per-event enrichment is a
+	// pure map lookup and never forks a `docker inspect`.
+	go a.runInventoryRefresh()
+
 	// Resolve sshd's listening ports once at startup, then refresh on a
 	// long ticker so a sshd_config edit + `systemctl reload ssh` is picked
 	// up without an agent restart. Failures are non-fatal — the reader
@@ -601,7 +605,25 @@ func (a *NativeEBPFAgent) sendEvent(event SecurityEvent) {
 			nativeLog.Debug().Msgf("Sent event: %s (pid=%d, priority=%s)", event.Rule, event.Process.PID, event.Priority)
 		}
 	default:
-		nativeLog.Warn().Msg("Event channel full, dropping event")
+		a.recordDroppedEvent()
+	}
+}
+
+// recordDroppedEvent tallies one event dropped because eventChan was full.
+// The count is logged in aggregate by reportDroppedEvents on the maintenance
+// tick — never per drop — so a saturated channel can't flood the journal.
+func (a *NativeEBPFAgent) recordDroppedEvent() {
+	a.droppedEvents.Add(1)
+}
+
+// reportDroppedEvents emits a single aggregated warning for events dropped
+// since the last call, and resets the counter. No-op when nothing was dropped.
+func (a *NativeEBPFAgent) reportDroppedEvents(window time.Duration) {
+	if n := a.droppedEvents.Swap(0); n > 0 {
+		nativeLog.Warn().
+			Uint64("dropped", n).
+			Dur("window", window).
+			Msg("Event channel saturated — dropping events (aggregated)")
 	}
 }
 
@@ -625,6 +647,39 @@ func (a *NativeEBPFAgent) GetEnrichmentStats() (containerCacheSize, namespaceCac
 	return a.enricher.CacheSize()
 }
 
+// containerInventoryRefreshInterval is how often the enricher relists running
+// containers to refresh its name inventory.
+const containerInventoryRefreshInterval = 30 * time.Second
+
+// runInventoryRefresh periodically rebuilds the enricher's container inventory
+// so per-event enrichment never forks a `docker inspect`. It warms the cache
+// once up front, then refreshes on a ticker until shutdown.
+func (a *NativeEBPFAgent) runInventoryRefresh() {
+	if a.enricher == nil {
+		return
+	}
+	refresh := func() {
+		if !a.enricher.IsEnabled() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		a.enricher.RefreshInventory(ctx)
+	}
+	refresh()
+
+	ticker := time.NewTicker(containerInventoryRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.shutdownChan:
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
+}
+
 // runCacheCleanup periodically cleans up the enrichment cache
 func (a *NativeEBPFAgent) runCacheCleanup() {
 	ticker := time.NewTicker(60 * time.Second)
@@ -636,6 +691,7 @@ func (a *NativeEBPFAgent) runCacheCleanup() {
 			return
 		case <-ticker.C:
 			a.enricher.CleanupCache()
+			a.reportDroppedEvents(60 * time.Second)
 			if logger.IsSectionEnabled(logger.SectionEBPF) {
 				containers, namespaces := a.enricher.CacheSize()
 				nativeLog.Debug().Int("containers", containers).Int("namespaces", namespaces).Msg("Cleaned enrichment cache")

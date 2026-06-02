@@ -3,6 +3,7 @@
 package ebpf
 
 import (
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 )
@@ -16,6 +17,17 @@ type EventFilter struct {
 	excludeUIDs  map[int]struct{}
 	includeComms map[string]struct{}
 	excludeComms map[string]struct{}
+
+	// File-event watch-set (allow-list). When active, only write-type ops
+	// under writeDirs and any op on readFiles are emitted; other file events
+	// are dropped at the source.
+	fileScopeActive bool
+	writeDirs       []string
+	readFiles       []string
+
+	// Signal watch-set. When active, only these signal numbers are emitted.
+	signalScopeActive bool
+	emitSignals       map[int]struct{}
 
 	// Statistics
 	totalEvents    uint64
@@ -63,6 +75,20 @@ func NewEventFilter(config *NativeConfig) *EventFilter {
 		f.excludeComms[comm] = struct{}{}
 	}
 
+	// File-event watch-set: active only when at least one list is configured.
+	f.writeDirs = config.FileMonitor.WriteDirs
+	f.readFiles = config.FileMonitor.ReadFiles
+	f.fileScopeActive = len(f.writeDirs) > 0 || len(f.readFiles) > 0
+
+	// Signal watch-set.
+	if len(config.SignalMonitor.EmitSignals) > 0 {
+		f.signalScopeActive = true
+		f.emitSignals = make(map[int]struct{}, len(config.SignalMonitor.EmitSignals))
+		for _, s := range config.SignalMonitor.EmitSignals {
+			f.emitSignals[s] = struct{}{}
+		}
+	}
+
 	return f
 }
 
@@ -94,7 +120,129 @@ func (f *EventFilter) ShouldInclude(event *SecurityEvent) bool {
 		return false
 	}
 
+	// File-event scoping (allow-list): emit only write-type ops under watched
+	// dirs and any access to sensitive read files; drop the rest at the source.
+	if f.fileScopeActive && event.Category == "file" && !f.fileEmitAllowed(event) {
+		atomic.AddUint64(&f.filteredEvents, 1)
+		return false
+	}
+
+	// Signal scoping: drop signals outside the consequential set.
+	if f.signalScopeActive && event.Category == "process" && event.Rule == "Process Signal" && !f.signalAllowed(event) {
+		atomic.AddUint64(&f.filteredEvents, 1)
+		return false
+	}
+
 	return true
+}
+
+// fileEmitAllowed reports whether a file event is in the watch-set: a sensitive
+// read file (any operation, including read-only), or a write-type operation
+// under a watched directory.
+func (f *EventFilter) fileEmitAllowed(event *SecurityEvent) bool {
+	path := event.File.Path
+	if path == "" {
+		if fn, ok := event.RawFields["filename"].(string); ok {
+			path = fn
+		}
+	}
+	if path == "" {
+		// No path to scope on — treat as noise rather than emit blindly.
+		return false
+	}
+	if fileMatchAny(path, f.readFiles) {
+		return true
+	}
+	if fimWriteish(event) && dirMatchAny(path, f.writeDirs) {
+		return true
+	}
+	return false
+}
+
+// signalAllowed reports whether the event's signal number is in the emit set.
+// An unparseable signal is allowed through rather than silently dropped.
+func (f *EventFilter) signalAllowed(event *SecurityEvent) bool {
+	sig, ok := rawFieldInt(event.RawFields, "sig")
+	if !ok {
+		return true
+	}
+	_, allowed := f.emitSignals[sig]
+	return allowed
+}
+
+// dirMatchAny reports whether path falls under any of the directory patterns.
+// A plain entry matches the path or any descendant ("/etc" matches "/etc/x").
+// A glob entry (e.g. "/home/*/.ssh") matches when it matches the path or any
+// of its ancestor directories, so descendants of a glob dir are covered.
+func dirMatchAny(path string, patterns []string) bool {
+	for _, pat := range patterns {
+		if !strings.ContainsAny(pat, "*?[") {
+			p := strings.TrimRight(pat, "/")
+			if path == p || strings.HasPrefix(path, p+"/") {
+				return true
+			}
+			continue
+		}
+		for d := path; ; {
+			if ok, _ := filepath.Match(pat, d); ok {
+				return true
+			}
+			parent := filepath.Dir(d)
+			if parent == d || parent == "/" || parent == "." {
+				break
+			}
+			d = parent
+		}
+	}
+	return false
+}
+
+// fileMatchAny reports whether path matches any of the file patterns exactly
+// or by shell glob (e.g. "/etc/sudoers.d/*", "/home/*/.ssh/id_*").
+func fileMatchAny(path string, patterns []string) bool {
+	for _, pat := range patterns {
+		if !strings.ContainsAny(pat, "*?[") {
+			if path == pat {
+				return true
+			}
+			continue
+		}
+		if ok, _ := filepath.Match(pat, path); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// rawFieldInt coerces a RawFields numeric value to int, tolerant of the integer
+// type the BPF struct decoded to.
+func rawFieldInt(fields map[string]interface{}, key string) (int, bool) {
+	v, ok := fields[key]
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int8:
+		return int(n), true
+	case int16:
+		return int(n), true
+	case int32:
+		return int(n), true
+	case int64:
+		return int(n), true
+	case uint8:
+		return int(n), true
+	case uint16:
+		return int(n), true
+	case uint32:
+		return int(n), true
+	case uint64:
+		return int(n), true
+	default:
+		return 0, false
+	}
 }
 
 // categoryEnabled checks if the event category is enabled

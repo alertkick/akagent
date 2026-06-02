@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"akagent/agent/authmonitor"
@@ -131,6 +132,10 @@ type NativeEBPFAgent struct {
 	// behind mu so callers can register/unregister from any goroutine.
 	sshdConfigCallbacks []func(*SSHDConfig)
 	eventChan     chan SecurityEvent
+	// droppedEvents counts events discarded because eventChan was full,
+	// aggregated and logged once per maintenance tick instead of one WRN
+	// line per drop (which could bury the journal under saturation).
+	droppedEvents atomic.Uint64
 	running       bool
 	listening     bool
 	shutdownChan  chan struct{}
@@ -296,6 +301,15 @@ func NewNativeAgentWithConfig(configPath string) (*NativeEBPFAgent, error) {
 	enricher := NewEventEnricherWithTTL(cacheTTL)
 	enricher.SetEnabled(config.EnableEnrichment)
 
+	// Channel buffer is per-server configurable (event_channel_size, pushed
+	// from the backend and applied at startup). A bigger buffer lets busy
+	// hosts absorb event bursts without dropping at source. Validate() floors
+	// it at 10; fall back to the default if somehow unset.
+	channelBufferSize := config.EventChannelSize
+	if channelBufferSize <= 0 {
+		channelBufferSize = eventChannelBufferSize
+	}
+
 	agent := &NativeEBPFAgent{
 		config:        config,
 		configPath:    configPath,
@@ -305,7 +319,7 @@ func NewNativeAgentWithConfig(configPath string) (*NativeEBPFAgent, error) {
 		enricher:      enricher,
 		sshHydrator:   NewSSHHydrator(),
 		sshdConfig:    NewSSHDConfigReader(),
-		eventChan:     make(chan SecurityEvent, eventChannelBufferSize),
+		eventChan:     make(chan SecurityEvent, channelBufferSize),
 		shutdownChan:  make(chan struct{}),
 		kernelSupport: support,
 		outputMode:    support.OutputMode(),

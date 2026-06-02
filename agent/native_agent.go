@@ -216,6 +216,24 @@ func convertWebConfigToNative(webConfig client.NativeAgentConfig) ebpf.NativeCon
 		config.EnrichmentCacheTTLSeconds = webConfig.EnrichmentCacheTTLSeconds
 	}
 
+	// Event channel buffer (per-host, takes effect on restart). Keep the
+	// default when unset; Validate() floors it.
+	if webConfig.EventChannelSize > 0 {
+		config.EventChannelSize = webConfig.EventChannelSize
+	}
+
+	// Event scoping watch-sets. Override the agent defaults only when the
+	// endpoint pushes its own non-empty lists.
+	if fm := webConfig.FileMonitor; fm != nil && (len(fm.WriteDirs) > 0 || len(fm.ReadFiles) > 0) {
+		config.FileMonitor = ebpf.FileMonitorConfig{
+			WriteDirs: fm.WriteDirs,
+			ReadFiles: fm.ReadFiles,
+		}
+	}
+	if sm := webConfig.SignalMonitor; sm != nil && len(sm.EmitSignals) > 0 {
+		config.SignalMonitor = ebpf.SignalMonitorConfig{EmitSignals: sm.EmitSignals}
+	}
+
 	return config
 }
 
@@ -262,6 +280,14 @@ func convertNativeConfigToWeb(config ebpf.NativeConfig) client.NativeAgentConfig
 		EnableNamespace:           config.EnableNamespace,
 		EnableEnrichment:          config.EnableEnrichment,
 		EnrichmentCacheTTLSeconds: config.EnrichmentCacheTTLSeconds,
+		EventChannelSize:          config.EventChannelSize,
+		FileMonitor: &client.NativeFileMonitorConfig{
+			WriteDirs: config.FileMonitor.WriteDirs,
+			ReadFiles: config.FileMonitor.ReadFiles,
+		},
+		SignalMonitor: &client.NativeSignalMonitorConfig{
+			EmitSignals: config.SignalMonitor.EmitSignals,
+		},
 	}
 
 	return webConfig
