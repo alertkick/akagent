@@ -1,7 +1,26 @@
 #!/bin/bash
 set -e
 
-# Release workflow: develop → main (via PR) → tag
+# Release workflow: develop → main (squash PR) → tag.
+#
+# Usage: ./new_release.sh [patch|minor]
+#   patch  bump the last version component, rolling .8 → next minor (default)
+#   minor  bump the second component (reset patch); use for breaking changes
+#
+# Runs non-interactively: the bump type is the only input, passed as the first
+# argument. Always prefer this over `git tag -a v…` directly so the rollover
+# logic stays consistent.
+
+RELEASE_TYPE="${1:-patch}"
+case "$RELEASE_TYPE" in
+    patch|minor) ;;
+    *)
+        echo "Usage: $0 [patch|minor]"
+        echo "  patch  bump the last version component (default, backwards-compatible)"
+        echo "  minor  bump the second component (breaking changes)"
+        exit 1
+        ;;
+esac
 
 # Ensure we're on develop
 CURRENT_BRANCH=$(git branch --show-current)
@@ -42,14 +61,14 @@ else
 fi
 
 version_num=${version#v}
-A=$(echo $version_num | cut -d '.' -f1)
-B=$(echo $version_num | cut -d '.' -f2)
-C=$(echo $version_num | cut -d '.' -f3)
+A=$(echo "$version_num" | cut -d '.' -f1)
+B=$(echo "$version_num" | cut -d '.' -f2)
+C=$(echo "$version_num" | cut -d '.' -f3)
 
-# Compute candidate patch (with rollover at .9) and minor versions.
+# Compute candidate patch (with rollover at .8) and minor versions.
 patch_A=$A; patch_B=$B; patch_C=$C
-if [ $patch_C -gt 8 ]; then
-    if [ $patch_B -gt 8 ]; then
+if [ "$patch_C" -gt 8 ]; then
+    if [ "$patch_B" -gt 8 ]; then
         patch_A=$((patch_A+1)); patch_B=0; patch_C=0
     else
         patch_B=$((patch_B+1)); patch_C=0
@@ -60,24 +79,12 @@ fi
 patchVersion="v$patch_A.$patch_B.$patch_C"
 
 minor_A=$A; minor_B=$((B+1)); minor_C=0
-if [ $minor_B -gt 9 ]; then
+if [ "$minor_B" -gt 9 ]; then
     minor_A=$((minor_A+1)); minor_B=0
 fi
 minorVersion="v$minor_A.$minor_B.$minor_C"
 
-# Show what will be released
-echo ""
-echo "Commits to be released (develop → main):"
-git log --oneline origin/main..develop | head -20
-echo ""
-echo "Candidates:"
-echo "  patch  → ${patchVersion}  (default — backwards-compatible)"
-echo "  minor  → ${minorVersion}  (pick this if this release contains breaking changes)"
-echo ""
-
-read -p "Are there any breaking changes in this release? (y/N): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [ "$RELEASE_TYPE" = "minor" ]; then
     nextVersion=$minorVersion
     relType="minor (breaking)"
 else
@@ -85,39 +92,19 @@ else
     relType="patch"
 fi
 
+echo ""
+echo "Commits to be released (develop → main):"
+git log --oneline origin/main..develop | head -20
+echo ""
 echo "New version will be: ${nextVersion} (${relType})"
 echo ""
 
-read -p "Create PR to merge develop → main and tag ${nextVersion}? (y/N): " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Release cancelled"
-    exit 1
-fi
-
-# Build default PR body and squash message
+# Build the PR body / squash commit message from the commit log.
 COMMIT_LOG=$(git log --oneline origin/main..develop | sed 's/^/- /')
-DEFAULT_BODY="## Release ${nextVersion}
+RELEASE_BODY="## Release ${nextVersion}
 
 ### Changes since ${version}
 ${COMMIT_LOG}"
-
-# Write to temp file for editing
-TMPFILE=$(mktemp /tmp/release-msg-XXXXXX.md)
-echo "$DEFAULT_BODY" > "$TMPFILE"
-
-# Open editor for the user to customize
-echo "Opening editor to customize the release/squash message..."
-${EDITOR:-vi} "$TMPFILE"
-
-# Read back the edited message
-RELEASE_BODY=$(cat "$TMPFILE")
-rm -f "$TMPFILE"
-
-if [ -z "$RELEASE_BODY" ]; then
-    echo "ERROR: Release message is empty. Aborting."
-    exit 1
-fi
 
 # Create PR from develop → main
 echo "Creating PR..."
@@ -128,24 +115,17 @@ PR_URL=$(gh pr create \
     --body "$RELEASE_BODY")
 echo "PR created: ${PR_URL}"
 
-read -p "Squash-merge the PR and tag ${nextVersion}? (y/N): " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "PR created but not merged. Merge manually when ready, then tag main."
-    exit 0
-fi
-
-# Squash-merge the PR with the edited message as commit message
+# Squash-merge the PR with the release message as the commit message
 echo "Squash-merging PR..."
 gh pr merge --squash --subject "Release ${nextVersion}" --body "$RELEASE_BODY" --delete-branch=false
 
 # Pull latest main and tag it
 git checkout main
 git pull origin main
-git tag -a $nextVersion -m "Release $nextVersion"
+git tag -a "$nextVersion" -m "Release $nextVersion"
 git push --tags
 
-# Reset develop to main so they're in sync after squash merge
+# Reset develop to main so they're in sync after the squash merge
 git checkout develop
 git reset --hard origin/main
 git push --force-with-lease origin develop
@@ -155,4 +135,4 @@ echo "Release ${nextVersion} complete!"
 echo "  - PR merged: ${PR_URL}"
 echo "  - Tag ${nextVersion} pushed to main"
 echo "  - develop branch reset to main"
-echo "  - Jenkins will build and upload the release"
+echo "  - Jenkins will build and deploy on the tag webhook."
