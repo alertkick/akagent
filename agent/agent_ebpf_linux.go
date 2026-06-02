@@ -128,63 +128,68 @@ func (a *agent) handleEBPFRequest(req client.Request) bool {
 
 	switch req.Method {
 	case "native_config.get":
-		a.log.Debug().Msg("agent.HandleServerRequest - received native_config.get request")
-		a.handleNativeConfigGetRequest(req)
+		a.goHandle("native_config.get", req, a.handleNativeConfigGetRequest)
 	case "native_config.update":
-		a.log.Debug().Msg("agent.HandleServerRequest - received native_config.update request")
-		a.handleNativeConfigUpdateRequest(req)
+		a.goHandle("native_config.update", req, a.handleNativeConfigUpdateRequest)
 	case "enable_native_agent":
-		a.log.Debug().Msg("agent.HandleServerRequest - received enable_native_agent request")
-		a.handleEnableNativeAgentRequest(req)
+		a.goHandle("enable_native_agent", req, a.handleEnableNativeAgentRequest)
 	case "disable_native_agent":
-		a.log.Debug().Msg("agent.HandleServerRequest - received disable_native_agent request")
-		a.handleDisableNativeAgentRequest(req)
+		a.goHandle("disable_native_agent", req, a.handleDisableNativeAgentRequest)
 	case "native_agent.status":
-		a.log.Debug().Msg("agent.HandleServerRequest - received native_agent.status request")
-		a.handleNativeAgentStatusRequest(req)
+		a.goHandle("native_agent.status", req, a.handleNativeAgentStatusRequest)
 	case "refresh_native_config", "refresh_security_rules":
 		// refresh_security_rules is the current name; refresh_native_config is the
 		// older internal alias kept while the API is migrated.
-		a.log.Debug().Str("method", req.Method).Msg("agent.HandleServerRequest - received refresh_native_config request")
-		a.handleRefreshNativeConfigRequest(req)
+		a.goHandle(req.Method, req, a.handleRefreshNativeConfigRequest)
 	case "agent.refresh_compliance":
-		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_compliance request")
-		a.handleRefreshComplianceRequest(req)
+		a.goHandle("agent.refresh_compliance", req, a.handleRefreshComplianceRequest)
 	case "native_rules.update":
-		a.log.Debug().Msg("agent.HandleServerRequest - received native_rules.update request")
-		a.handleNativeRulesUpdateRequest(req)
+		a.goHandle("native_rules.update", req, a.handleNativeRulesUpdateRequest)
 	case "update_agent":
-		a.log.Info().Msg("agent.HandleServerRequest - received update_agent request")
-		go a.handleUpdateAgentRequest(req)
+		a.goHandle("update_agent", req, a.handleUpdateAgentRequest)
 	case "ssh_lockdown.get_state":
-		a.log.Debug().Msg("agent.HandleServerRequest - received ssh_lockdown.get_state request")
-		a.handleSSHLockdownGetStateRequest(req)
+		a.goHandle("ssh_lockdown.get_state", req, a.handleSSHLockdownGetStateRequest)
 	case "ssh_lockdown.set":
-		a.log.Info().Msg("agent.HandleServerRequest - received ssh_lockdown.set request")
-		a.handleSSHLockdownSetRequest(req)
+		a.goHandle("ssh_lockdown.set", req, a.handleSSHLockdownSetRequest)
 	case "ssh_lockdown.unlock":
-		a.log.Info().Msg("agent.HandleServerRequest - received ssh_lockdown.unlock request")
-		a.handleSSHLockdownUnlockRequest(req)
+		a.goHandle("ssh_lockdown.unlock", req, a.handleSSHLockdownUnlockRequest)
 	case "ssh_lockdown.lock_now":
-		a.log.Info().Msg("agent.HandleServerRequest - received ssh_lockdown.lock_now request")
-		a.handleSSHLockdownLockNowRequest(req)
+		a.goHandle("ssh_lockdown.lock_now", req, a.handleSSHLockdownLockNowRequest)
 	case "fim.approve_paths":
-		a.log.Info().Msg("agent.HandleServerRequest - received fim.approve_paths request")
-		a.handleFIMApprovePathsRequest(req)
+		a.goHandle("fim.approve_paths", req, a.handleFIMApprovePathsRequest)
 	case "fim.rebaseline":
-		a.log.Info().Msg("agent.HandleServerRequest - received fim.rebaseline request")
-		a.handleFIMRebaselineRequest(req)
+		a.goHandle("fim.rebaseline", req, a.handleFIMRebaselineRequest)
 	case "response.block_ip":
-		a.log.Info().Msg("agent.HandleServerRequest - received response.block_ip request")
-		a.handleResponseBlockIPRequest(req)
+		a.goHandle("response.block_ip", req, a.handleResponseBlockIPRequest)
 	case "response.unblock_ip":
-		a.log.Info().Msg("agent.HandleServerRequest - received response.unblock_ip request")
-		a.handleResponseUnblockIPRequest(req)
+		a.goHandle("response.unblock_ip", req, a.handleResponseUnblockIPRequest)
 	case "response.kill_process":
-		a.log.Info().Msg("agent.HandleServerRequest - received response.kill_process request")
-		a.handleResponseKillProcessRequest(req)
+		a.goHandle("response.kill_process", req, a.handleResponseKillProcessRequest)
 	default:
 		return false
 	}
 	return true
+}
+
+// goHandle runs an eBPF server-request handler in its own goroutine with
+// panic recovery. The request consumer is serial, so running a handler inline
+// means a slow or wedged one (e.g. an eBPF reconfigure that stalls under load)
+// pins the consumer and delays every other command. Combined with the buffered
+// ServerReqChan, dispatching here keeps the connection's read path live so a
+// slow handler can't trigger heartbeat-timeout disconnects. Recovery ensures a
+// panicking handler can't take down the whole agent process. Handlers send
+// their own ID-correlated response when they finish, so async dispatch is safe.
+func (a *agent) goHandle(method string, req client.Request, fn func(client.Request)) {
+	a.log.Debug().Str("method", method).Msg("agent.handleEBPFRequest - dispatching handler")
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				a.log.Error().
+					Interface("panic", r).
+					Str("method", method).
+					Msg("agent.handleEBPFRequest - recovered panic in handler")
+			}
+		}()
+		fn(req)
+	}()
 }
