@@ -126,15 +126,15 @@ func (e EBPFAgentsListResponse) String() string {
 
 // EBPFAgentInfo represents information about an eBPF agent
 type EBPFAgentInfo struct {
-	Type          string   `json:"type"`
-	Name          string   `json:"name"`
-	Version       string   `json:"version,omitempty"`
-	Installed     bool     `json:"installed"`
-	Enabled       bool     `json:"enabled"`
-	ServiceStatus string   `json:"service_status"`
-	BinaryPath    string   `json:"binary_path,omitempty"`
-	ConfigPath    string   `json:"config_path,omitempty"`
-	RulesDir      string   `json:"rules_dir,omitempty"`
+	Type          string `json:"type"`
+	Name          string `json:"name"`
+	Version       string `json:"version,omitempty"`
+	Installed     bool   `json:"installed"`
+	Enabled       bool   `json:"enabled"`
+	ServiceStatus string `json:"service_status"`
+	BinaryPath    string `json:"binary_path,omitempty"`
+	ConfigPath    string `json:"config_path,omitempty"`
+	RulesDir      string `json:"rules_dir,omitempty"`
 }
 
 type GeneralCommandResponse struct {
@@ -145,7 +145,7 @@ type GeneralCommandResponse struct {
 
 // UpdateAgentProgressResponse represents a progress update during an agent update
 type UpdateAgentProgressResponse struct {
-	Stage   string `json:"stage"`   // pending, downloading, installing, restarting, completed, failed, rolled_back
+	Stage   string `json:"stage"` // pending, downloading, installing, restarting, completed, failed, rolled_back
 	Message string `json:"message"`
 	Percent int    `json:"percent"`
 	Status  string `json:"status"` // in_progress, success, failed
@@ -185,10 +185,10 @@ type Params struct {
 
 // NativeAgentConfigResponse represents the response for native agent config get
 type NativeAgentConfigResponse struct {
-	Status  string                 `json:"status"` // success, failed
-	Config  NativeAgentConfig      `json:"config"`
-	Error   string                 `json:"error,omitempty"`
-	Message string                 `json:"message,omitempty"`
+	Status  string            `json:"status"` // success, failed
+	Config  NativeAgentConfig `json:"config"`
+	Error   string            `json:"error,omitempty"`
+	Message string            `json:"message,omitempty"`
 }
 
 func (n NativeAgentConfigResponse) String() string {
@@ -244,6 +244,11 @@ type NativeAgentConfig struct {
 	// ---- Alerting ----
 	EnableAlerts bool                   `json:"enable_alerts" yaml:"enable_alerts"`
 	AlertRules   []NativeAgentAlertRule `json:"alert_rules,omitempty" yaml:"alert_rules,omitempty"`
+
+	// SSHSessionCommandCapture, when true, records the (redacted) command line
+	// of each process run during a tracked SSH login session. Off by default;
+	// see ebpf.NativeConfig.SSHSessionCommandCapture for the privacy rationale.
+	SSHSessionCommandCapture bool `json:"ssh_session_command_capture,omitempty" yaml:"ssh_session_command_capture,omitempty"`
 }
 
 // NativeFileMonitorConfig scopes which file events the agent emits: write-type
@@ -303,15 +308,15 @@ type NativeAgentStatusPost struct {
 
 // NativeAgentStatus represents the current status of the native agent
 type NativeAgentStatus struct {
-	Enabled          bool              `json:"enabled"`
-	Running          bool              `json:"running"`
-	Listening        bool              `json:"listening"`
-	Version          string            `json:"version"`
-	ConfigPath       string            `json:"config_path"`
-	FilterStats      FilterStats       `json:"filter_stats"`
-	AlertStats       AlertStats        `json:"alert_stats"`
-	RateLimiterStats RateLimiterStats  `json:"rate_limiter_stats"`
-	Categories       CategoryStats     `json:"categories"`
+	Enabled          bool             `json:"enabled"`
+	Running          bool             `json:"running"`
+	Listening        bool             `json:"listening"`
+	Version          string           `json:"version"`
+	ConfigPath       string           `json:"config_path"`
+	FilterStats      FilterStats      `json:"filter_stats"`
+	AlertStats       AlertStats       `json:"alert_stats"`
+	RateLimiterStats RateLimiterStats `json:"rate_limiter_stats"`
+	Categories       CategoryStats    `json:"categories"`
 }
 
 // RateLimiterStats represents per-rule rate limiting statistics
