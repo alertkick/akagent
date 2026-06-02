@@ -87,6 +87,23 @@ func (d *DiscarderManager) RegisterMaps(config, comms, pids, stats *ciliumebpf.M
 	}
 }
 
+// Reset drops all registered map references and per-map state. Call it on
+// Stop/teardown: closing the BPF program objects invalidates these map FDs, so
+// the stored references go stale. Without clearing, the next Start re-registers
+// on top of the stale entries — doubling the map count (18 → 36) and causing
+// "invalid FD" errors when SyncFromConfig validates the (stale) first map.
+func (d *DiscarderManager) Reset() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.configMaps = nil
+	d.commMaps = nil
+	d.pidMaps = nil
+	d.statsMaps = nil
+	d.disabledCategories = make(map[uint32]bool)
+	d.excludedComms = make(map[string]bool)
+	d.excludedPIDs = make(map[uint32]bool)
+}
+
 // SyncFromConfig populates all discarder maps from the current NativeConfig.
 // This should be called after loading all BPF programs and registering maps.
 func (d *DiscarderManager) SyncFromConfig(config *NativeConfig) error {

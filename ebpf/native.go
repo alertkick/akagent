@@ -437,6 +437,13 @@ func (a *NativeEBPFAgent) Stop(ctx context.Context) error {
 	// Close all BPF objects
 	a.closeAllObjects()
 
+	// Drop the now-stale discarder map references (their FDs were just closed
+	// with the objects). Otherwise a later Start re-registers on top of them,
+	// doubling the map count and tripping "invalid FD" errors on sync.
+	if a.discarders != nil {
+		a.discarders.Reset()
+	}
+
 	// Cleanup pinned programs
 	if a.pinManager != nil {
 		if err := a.pinManager.UnpinAll(); err != nil {
