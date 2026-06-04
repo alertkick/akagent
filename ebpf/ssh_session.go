@@ -362,7 +362,11 @@ func (st *sshSessionState) stamp(event *SecurityEvent, status string, now time.T
 		rf["logout_time"] = now.UTC().Format(time.RFC3339)
 		rf["duration_seconds"] = int(now.Sub(st.loginTime).Seconds())
 	}
-	if captureCommands && len(st.commands) > 0 {
+	if captureCommands {
+		// Always emit the commands array when capture is on — even when empty —
+		// so the dashboard can tell "capture enabled, nothing recorded yet"
+		// (empty array) from "capture disabled" (field absent). Without this a
+		// freshly-enabled or idle session looks identical to a disabled one.
 		cmds := make([]sshSessionCommand, len(st.commands))
 		copy(cmds, st.commands)
 		rf["commands"] = cmds

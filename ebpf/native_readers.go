@@ -558,23 +558,18 @@ func (a *NativeEBPFAgent) sendEvent(event SecurityEvent) {
 		return
 	}
 
-	// Apply alert filter (semantic filtering - drops noise like signal 0)
-	if !a.alertFilter.ShouldAlert(&event) {
-		return
-	}
-
-	// Apply per-rule rate limiting (high-priority events bypass rate limiting)
-	if !event.IsHighPriority() && !a.rateLimiter.Allow(event.Rule) {
-		return
-	}
-
-	// Enrich with process lineage from process cache
+	// Process-lineage enrichment, SSH hydration, and session tracking run
+	// BEFORE the alert/noise filter and rate limiter. The session tracker must
+	// observe the full execve stream to attribute in-session commands and
+	// (when enabled) capture their redacted argv — the per-rule rate limiter is
+	// a host-global throttle on "Process Execution" meant to cap alert volume,
+	// not session bookkeeping, and would otherwise starve the tracker on busy
+	// hosts. Lineage enrichment here is a cheap process-cache lookup; the
+	// heavier container/namespace enrichment stays after the rate limiter so it
+	// never runs on events that get dropped.
 	if a.processCache != nil {
 		a.processCache.Enrich(&event)
 	}
-
-	// Enrich with container and namespace info
-	a.enricher.Enrich(&event)
 
 	// Stamp SSH source IP when the event is a shell process spawned by
 	// sshd. Quietly no-ops for everything else, so calling unconditionally
@@ -590,6 +585,22 @@ func (a *NativeEBPFAgent) sendEvent(event SecurityEvent) {
 	if a.sshSessionTracker != nil {
 		a.sshSessionTracker.OnEvent(&event, a.processCache, a.GetNativeConfig().SSHSessionCommandCapture)
 	}
+
+	// Apply alert filter (semantic filtering - drops noise like signal 0)
+	if !a.alertFilter.ShouldAlert(&event) {
+		return
+	}
+
+	// Apply per-rule rate limiting (high-priority events bypass rate limiting).
+	// Session start/heartbeat events are stamped high-priority so they bypass
+	// this; ordinary in-session command events may be dropped from emission
+	// here, but their command was already captured by OnEvent above.
+	if !event.IsHighPriority() && !a.rateLimiter.Allow(event.Rule) {
+		return
+	}
+
+	// Enrich with container and namespace info
+	a.enricher.Enrich(&event)
 
 	// For network events, stamp is_ssh_port=true when src/dst port matches
 	// any port sshd is listening on. Endpoint matchers consult this flag
