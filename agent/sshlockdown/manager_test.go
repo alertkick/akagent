@@ -3,6 +3,7 @@ package sshlockdown
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -71,6 +72,61 @@ func TestManager_UnlockAppliesAndRelocks(t *testing.T) {
 	// Advance clock past the unlock; next tick should re-lock.
 	clk.Set(mustParse(t, time.RFC3339, "2026-05-29T14:11:00Z"))
 	waitFor(t, func() bool { l, _, _, _ := b.Snapshot(); return l })
+}
+
+func TestManager_OnLockChangeFiresOnTransitions(t *testing.T) {
+	b := &NoopBlocker{}
+	clk := newFakeClock(mustParse(t, time.RFC3339, "2026-05-29T14:00:00Z"))
+
+	var mu sync.Mutex
+	var transitions []bool
+	m, _ := NewManager(b, Options{
+		StatePath:       filepath.Join(t.TempDir(), "lockdown.json"),
+		Now:             clk.Now,
+		MinTickInterval: 1 * time.Second,
+		OnLockChange: func(locked bool) {
+			mu.Lock()
+			transitions = append(transitions, locked)
+			mu.Unlock()
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { m.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	snapshot := func() []bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]bool(nil), transitions...)
+	}
+
+	// First eval seeds locked=true (default state).
+	waitFor(t, func() bool { tr := snapshot(); return len(tr) >= 1 && tr[0] })
+
+	// Unlock → callback fires locked=false.
+	if _, err := m.Unlock(10*time.Minute, "ssidhu"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		tr := snapshot()
+		return len(tr) >= 2 && tr[len(tr)-1] == false
+	})
+
+	// Advance past the window → re-lock fires locked=true.
+	clk.Set(mustParse(t, time.RFC3339, "2026-05-29T14:11:00Z"))
+	waitFor(t, func() bool {
+		tr := snapshot()
+		return len(tr) >= 3 && tr[len(tr)-1] == true
+	})
+
+	// The callback must fire only on transitions, not every tick: with three
+	// distinct states (seed-lock, unlock, relock) we expect exactly 3.
+	if tr := snapshot(); len(tr) != 3 {
+		t.Fatalf("expected 3 transition callbacks, got %d: %v", len(tr), tr)
+	}
 }
 
 func TestManager_UnlockExtensionNeverShortens(t *testing.T) {

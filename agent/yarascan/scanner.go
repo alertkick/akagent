@@ -113,6 +113,17 @@ func (s *Scanner) Available() bool {
 	return s.available
 }
 
+// RulesPath returns the active ruleset path (may be empty if never set).
+func (s *Scanner) RulesPath() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rulesPath
+}
+
+// Binary returns the resolved yara binary path/name. Set once at
+// construction, so no lock is needed.
+func (s *Scanner) Binary() string { return s.binary }
+
 // Start launches the scan worker (idempotent). The worker runs regardless of
 // availability; ScanAsync gates enqueues, so rules arriving later just work.
 func (s *Scanner) Start() {

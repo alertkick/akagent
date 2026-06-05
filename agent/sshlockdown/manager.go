@@ -44,12 +44,12 @@ type Blocker interface {
 // the real kernel implementation, and in unit tests. It records the last
 // call so tests can assert intent without needing a kernel.
 type NoopBlocker struct {
-	mu             sync.Mutex
-	LastLocked     bool
-	LastAllowlist  []string
-	LockCalls      int
-	UnlockCalls    int
-	CloseCalled    bool
+	mu            sync.Mutex
+	LastLocked    bool
+	LastAllowlist []string
+	LockCalls     int
+	UnlockCalls   int
+	CloseCalled   bool
 }
 
 func (b *NoopBlocker) Lock(allowlist []string) error {
@@ -111,6 +111,16 @@ type Options struct {
 	// Logger receives non-fatal warnings (failed Save, blocker errors).
 	// Nil-safe — falls back to discard.
 	Logger Logger
+
+	// OnLockChange, if set, is called whenever the *planned* lock decision
+	// changes — i.e. the result of Evaluate(state, now), NOT the dead-man
+	// emergency override. It fires once on the first evaluation (so the
+	// consumer can seed its initial view) and again on every subsequent
+	// transition. locked=false means the host entered an unlock/maintenance
+	// window; locked=true means it (re-)locked. Used to drive FIM
+	// maintenance suppression and rescan-on-relock. Called synchronously
+	// from the ticker goroutine — keep it cheap or hand off to a goroutine.
+	OnLockChange func(locked bool)
 }
 
 // Logger is the minimal log surface — keeps this package free of any
@@ -280,6 +290,12 @@ func (m *Manager) Run(ctx context.Context) {
 		}
 	}()
 
+	// Track the previous planned-decision lock state so OnLockChange fires
+	// only on transitions. firstEval forces one call on startup to seed the
+	// consumer's view.
+	var lastLocked bool
+	firstEval := true
+
 	for {
 		// Take a consistent snapshot for this iteration.
 		m.mu.RLock()
@@ -289,6 +305,17 @@ func (m *Manager) Run(ctx context.Context) {
 
 		now := m.opts.Now()
 		decision := Evaluate(state, now)
+
+		// Fire the planned-decision lock-change callback BEFORE any dead-man
+		// override. Maintenance suppression must follow the operator's
+		// schedule / ad-hoc unlock, not an emergency unlock caused by losing
+		// the control-plane heartbeat — during a dead-man unlock we want FIM
+		// to keep watching, since that's exactly when a host is unreachable.
+		if m.opts.OnLockChange != nil && (firstEval || decision.Locked != lastLocked) {
+			m.opts.OnLockChange(decision.Locked)
+		}
+		lastLocked = decision.Locked
+		firstEval = false
 
 		// Dead-man override: if the threshold has elapsed without a
 		// heartbeat, force-unlock so operators can reach the host out-of-

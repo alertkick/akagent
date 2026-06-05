@@ -121,6 +121,43 @@ func TestPkgMgrSuppression(t *testing.T) {
 	}
 }
 
+func TestMaintenanceSuppression(t *testing.T) {
+	dir := t.TempDir()
+	fileA := filepath.Join(dir, "a")
+	write(t, fileA, "v1")
+	// SuppressPkgMgr off — proves the suppression comes from maintenance mode,
+	// not package-manager attribution.
+	m, changes, expected := newTestManager(t, dir, false)
+	m.Rebaseline()
+
+	m.SetMaintenanceMode(true)
+
+	// A genuine, non-pkg-mgr edit during a maintenance window is treated as
+	// expected: routed to onExpected with reason "maintenance", not onChange.
+	write(t, fileA, "v2")
+	m.CheckNow(fileA, Trigger{Comm: "vim"})
+	if len(*changes) != 0 {
+		t.Fatalf("maintenance change should be suppressed, got %+v", *changes)
+	}
+	if len(*expected) != 1 || (*expected)[0].SuppressReason != "maintenance" {
+		t.Fatalf("expected one maintenance-suppressed change, got %+v", *expected)
+	}
+
+	// The suppressed change was silently re-baselined, so a re-check is a no-op.
+	m.CheckNow(fileA, Trigger{Comm: "cat"})
+	if len(*changes) != 0 {
+		t.Fatalf("re-baselined path should not flag, got %+v", *changes)
+	}
+
+	// After the window closes, a fresh edit is a genuine violation again.
+	m.SetMaintenanceMode(false)
+	write(t, fileA, "v3")
+	m.CheckNow(fileA, Trigger{Comm: "vim"})
+	if len(*changes) != 1 || (*changes)[0].Kind != KindModified {
+		t.Fatalf("post-maintenance edit should flag, got %+v", *changes)
+	}
+}
+
 func TestApproveClearsFinding(t *testing.T) {
 	dir := t.TempDir()
 	fileA := filepath.Join(dir, "a")

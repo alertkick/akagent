@@ -130,14 +130,18 @@ func (a *NativeEBPFAgent) emitFIMEvent(ev SecurityEvent) {
 }
 
 // buildFIMEvent turns a fim.Change into a SecurityEvent. A genuine violation is
-// Critical "File Integrity Violation"; a suppressed package-manager change is
-// an Informational "Expected File Change" kept for audit.
+// Critical "File Integrity Violation"; a suppressed change is an Informational
+// audit record — "Expected File Change" for a package-manager edit, or
+// "Maintenance Window Change" when the host was unlocked for maintenance.
 func buildFIMEvent(c fim.Change, expected bool) SecurityEvent {
 	priority := PriorityCritical
 	rule := "File Integrity Violation"
 	if expected {
 		priority = PriorityInformational
 		rule = "Expected File Change"
+		if c.SuppressReason == "maintenance" {
+			rule = "Maintenance Window Change"
+		}
 	}
 	var parent string
 	if len(c.Trigger.Ancestry) > 0 {
