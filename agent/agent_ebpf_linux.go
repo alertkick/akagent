@@ -10,6 +10,7 @@ import (
 	"akagent/ebpf"
 	"context"
 	"sync"
+	"time"
 )
 
 // platformAgentData holds Linux-specific eBPF agent fields
@@ -48,6 +49,12 @@ type platformAgentData struct {
 	// enforcement is actually in effect.
 	lockdownBlockerMechanism string // "lsm-bpf" | "noop"
 	lockdownBlockerReason    string
+
+	// scanStatusMu guards lastScanRescanAt, which records the last time a
+	// re-lock transition triggered a FIM rebaseline. Written by the
+	// lockdown ticker (via OnLockChange) and read by the status reporter.
+	scanStatusMu     sync.Mutex
+	lastScanRescanAt time.Time
 }
 
 func newPlatformAgentData() platformAgentData {

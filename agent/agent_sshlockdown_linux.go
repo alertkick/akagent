@@ -99,6 +99,7 @@ func (a *agent) initSSHLockdown(ctx context.Context) {
 		DeadManThreshold: 10 * time.Minute,
 		MinTickInterval:  30 * time.Second,
 		Logger:           zerologAdapter{log: a.log.With().Str("subsystem", "ssh_lockdown").Logger()},
+		OnLockChange:     a.onLockStateChange(),
 	})
 	if err != nil {
 		a.log.Warn().Err(err).Msg("agent.initSSHLockdown - failed to construct manager")
@@ -133,6 +134,12 @@ func (a *agent) initSSHLockdown(ctx context.Context) {
 	}
 
 	go mgr.Run(ctx)
+
+	// Report FIM/YARA scan status to the server so the File Integrity tab
+	// can show whether the baseline + malware ruleset are built and how the
+	// host's lock state is gating integrity monitoring. Lock transitions push
+	// out-of-band (OnLockChange); this loop is the periodic refresh.
+	go a.runSecurityScanStatusReporter(ctx)
 }
 
 // lockdownReportPayload is the wire shape consumed by the endpoint's

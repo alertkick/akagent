@@ -1,6 +1,7 @@
 package fim
 
 import (
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,23 @@ type Change struct {
 	Algo             string
 	Trigger          Trigger
 	PkgMgrAttributed bool
+	// SuppressReason explains why a change was routed to onExpected rather
+	// than onChange: "pkg-mgr" (attributed to a package manager) or
+	// "maintenance" (the host was in an unlock/maintenance window, so the
+	// operator is expected to be changing files). Empty for a genuine
+	// finding delivered via onChange.
+	SuppressReason string
+}
+
+// Status is a point-in-time snapshot of the manager's baseline, surfaced up
+// the stack so the UI can show whether the integrity baseline has been built.
+type Status struct {
+	Ready          bool
+	FileCount      int
+	LastBaselineAt time.Time
+	HashAlgo       string
+	Roots          []string
+	Maintenance    bool
 }
 
 // Manager owns the baseline and the re-check pipeline. onChange is invoked for
@@ -58,12 +76,14 @@ type Manager struct {
 	onChange   func(Change)
 	onExpected func(Change)
 
-	mu       sync.Mutex
-	baseline Baseline
-	ready    bool
-	emitted  map[string]string // path → last-emitted hash (alert-once de-dupe)
-	timers   map[string]*time.Timer
-	pending  map[string]Trigger
+	mu             sync.Mutex
+	baseline       Baseline
+	ready          bool
+	lastBaselineAt time.Time         // when the baseline was last (re)built or loaded
+	maintenance    bool              // true while the host is in an unlock/maintenance window
+	emitted        map[string]string // path → last-emitted hash (alert-once de-dupe)
+	timers         map[string]*time.Timer
+	pending        map[string]Trigger
 }
 
 // New builds a Manager, applying defaults for any unset config field.
@@ -93,9 +113,16 @@ func New(cfg Config, onChange, onExpected func(Change)) *Manager {
 // the binary dirs, so it must not block agent startup).
 func (m *Manager) Start() {
 	if b, err := LoadBaseline(m.cfg.StatePath); err == nil && b != nil {
+		// The baseline file is rewritten on every save, so its mtime is a
+		// good proxy for "last built" when we load a persisted baseline.
+		built := time.Now()
+		if fi, statErr := os.Stat(m.cfg.StatePath); statErr == nil {
+			built = fi.ModTime()
+		}
 		m.mu.Lock()
 		m.baseline = b
 		m.ready = true
+		m.lastBaselineAt = built
 		m.mu.Unlock()
 		return
 	}
@@ -104,6 +131,7 @@ func (m *Manager) Start() {
 		m.mu.Lock()
 		m.baseline = scanned
 		m.ready = true
+		m.lastBaselineAt = time.Now()
 		m.mu.Unlock()
 		_ = m.save()
 	}()
@@ -116,6 +144,31 @@ func (m *Manager) Ready() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.ready
+}
+
+// Status returns a snapshot of the baseline state for status reporting.
+func (m *Manager) Status() Status {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return Status{
+		Ready:          m.ready,
+		FileCount:      len(m.baseline),
+		LastBaselineAt: m.lastBaselineAt,
+		HashAlgo:       m.cfg.HashAlgo,
+		Roots:          append([]string(nil), m.cfg.Paths...),
+		Maintenance:    m.maintenance,
+	}
+}
+
+// SetMaintenanceMode toggles maintenance suppression. While on, genuine
+// content changes are treated as expected: the baseline is silently updated
+// and the change is reported via onExpected (informational audit) instead of
+// onChange (a Critical violation). The operator is assumed to be patching the
+// host during an unlock/maintenance window, so file drift is not alarming.
+func (m *Manager) SetMaintenanceMode(on bool) {
+	m.mu.Lock()
+	m.maintenance = on
+	m.mu.Unlock()
 }
 
 // Monitors reports whether path falls under a configured root and isn't
@@ -205,8 +258,18 @@ func (m *Manager) check(path string, t Trigger) {
 		m.mu.Unlock()
 		return // already reported this exact change
 	}
-	if pkgmgr && m.cfg.SuppressPkgMgr {
-		// Expected change: re-baseline silently and clear de-dupe state.
+	// Suppress when attributed to a package manager, or when the host is in a
+	// maintenance window (operator is expected to be changing files). Both
+	// paths silently re-baseline and report informationally via onExpected.
+	suppress, reason := false, ""
+	switch {
+	case pkgmgr && m.cfg.SuppressPkgMgr:
+		suppress, reason = true, "pkg-mgr"
+	case m.maintenance:
+		suppress, reason = true, "maintenance"
+	}
+	if suppress {
+		change.SuppressReason = reason
 		if kind == KindRemoved {
 			delete(m.baseline, path)
 		} else {
@@ -273,6 +336,7 @@ func (m *Manager) Rebaseline() {
 	m.baseline = scanned
 	m.emitted = make(map[string]string)
 	m.ready = true
+	m.lastBaselineAt = time.Now()
 	m.mu.Unlock()
 	_ = m.save()
 }
