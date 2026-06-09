@@ -3,7 +3,9 @@
 package ebpf
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,6 +55,39 @@ func (a *NativeEBPFAgent) initYara() {
 		a.yaraSyncer.Start()
 	}
 	nativeLog.Info().Bool("available", a.yaraScanner.Available()).Str("rules", rulesPath).Msg("YARA scanner initialized")
+}
+
+// YaraApplyRules writes a pushed ruleset bundle to the scanner's rules file
+// and hot-swaps it in, the same way the optional HTTP syncer would. Used by
+// the yara.sync_rules command so the control plane can deliver the curated +
+// tenant ruleset over the authenticated command channel without distributing
+// an API key to every host. The write is atomic (temp file + rename) so the
+// scanner never reads a half-written ruleset.
+func (a *NativeEBPFAgent) YaraApplyRules(content string) error {
+	if a.yaraScanner == nil {
+		return fmt.Errorf("yara scanner not initialized")
+	}
+	if strings.TrimSpace(content) == "" {
+		return fmt.Errorf("empty ruleset")
+	}
+	path := a.yaraScanner.RulesPath()
+	if path == "" {
+		path = yarascan.DefaultRulesPath
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create rules dir: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write rules: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("swap rules: %w", err)
+	}
+	a.yaraScanner.SetRules(path)
+	nativeLog.Info().Str("rules", path).Bool("available", a.yaraScanner.Available()).Msg("YARA ruleset applied from control plane")
+	return nil
 }
 
 // yaraScan queues a file path for YARA scanning. No-op when the scanner isn't

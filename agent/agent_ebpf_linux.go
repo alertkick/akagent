@@ -166,6 +166,8 @@ func (a *agent) handleEBPFRequest(req client.Request) bool {
 		a.goHandle("fim.approve_paths", req, a.handleFIMApprovePathsRequest)
 	case "fim.rebaseline":
 		a.goHandle("fim.rebaseline", req, a.handleFIMRebaselineRequest)
+	case "yara.sync_rules":
+		a.goHandle("yara.sync_rules", req, a.handleYaraSyncRulesRequest)
 	case "response.block_ip":
 		a.goHandle("response.block_ip", req, a.handleResponseBlockIPRequest)
 	case "response.unblock_ip":

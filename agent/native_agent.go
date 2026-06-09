@@ -237,6 +237,29 @@ func convertWebConfigToNative(webConfig client.NativeAgentConfig) ebpf.NativeCon
 	// Per-server opt-in: capture (redacted) command lines for SSH sessions.
 	config.SSHSessionCommandCapture = webConfig.SSHSessionCommandCapture
 
+	// File-integrity baseline subsystem. Nil means keep the agent default
+	// (disabled, with built-in monitored paths). When the control plane
+	// sends it, mirror Enabled and any overrides; Validate() fills unset
+	// paths/algo/debounce when Enabled is true. UpdateNativeConfig calls
+	// initFIM() after applying this, so flipping Enabled true takes effect
+	// without an agent restart.
+	if fi := webConfig.FileIntegrity; fi != nil {
+		config.FileIntegrity.Enabled = fi.Enabled
+		if len(fi.Paths) > 0 {
+			config.FileIntegrity.Paths = fi.Paths
+		}
+		if len(fi.Exclude) > 0 {
+			config.FileIntegrity.Exclude = fi.Exclude
+		}
+		if fi.HashAlgo != "" {
+			config.FileIntegrity.HashAlgo = fi.HashAlgo
+		}
+		config.FileIntegrity.SuppressPkgMgr = fi.SuppressPkgMgr
+		if fi.DebounceMs > 0 {
+			config.FileIntegrity.DebounceMs = fi.DebounceMs
+		}
+	}
+
 	return config
 }
 
