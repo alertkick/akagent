@@ -237,6 +237,29 @@ func convertWebConfigToNative(webConfig client.NativeAgentConfig) ebpf.NativeCon
 	// Per-server opt-in: capture (redacted) command lines for SSH sessions.
 	config.SSHSessionCommandCapture = webConfig.SSHSessionCommandCapture
 
+	// File-integrity baseline subsystem. Nil means keep the agent default
+	// (disabled, with built-in monitored paths). When the control plane
+	// sends it, mirror Enabled and any overrides; Validate() fills unset
+	// paths/algo/debounce when Enabled is true. UpdateNativeConfig calls
+	// initFIM() after applying this, so flipping Enabled true takes effect
+	// without an agent restart.
+	if fi := webConfig.FileIntegrity; fi != nil {
+		config.FileIntegrity.Enabled = fi.Enabled
+		if len(fi.Paths) > 0 {
+			config.FileIntegrity.Paths = fi.Paths
+		}
+		if len(fi.Exclude) > 0 {
+			config.FileIntegrity.Exclude = fi.Exclude
+		}
+		if fi.HashAlgo != "" {
+			config.FileIntegrity.HashAlgo = fi.HashAlgo
+		}
+		config.FileIntegrity.SuppressPkgMgr = fi.SuppressPkgMgr
+		if fi.DebounceMs > 0 {
+			config.FileIntegrity.DebounceMs = fi.DebounceMs
+		}
+	}
+
 	return config
 }
 
@@ -374,6 +397,12 @@ func (a *agent) handleNativeConfigUpdateRequest(req client.Request) {
 	} else {
 		response.Message = "config updated successfully"
 	}
+
+	// FIM/YARA enablement or watch-sets may have changed. Report the fresh scan
+	// status now so the UI flips from "Not enabled" to the current state within
+	// a second, rather than waiting for the next periodic report (up to 15
+	// minutes away). Fire-and-forget so it never blocks the config response.
+	a.pushSecurityScanStatusAsync("native_config.update")
 
 	response.Config = webConfig
 	a.sendNativeConfigResponse(req, response)

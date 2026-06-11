@@ -249,6 +249,25 @@ type NativeAgentConfig struct {
 	// of each process run during a tracked SSH login session. Off by default;
 	// see ebpf.NativeConfig.SSHSessionCommandCapture for the privacy rationale.
 	SSHSessionCommandCapture bool `json:"ssh_session_command_capture,omitempty" yaml:"ssh_session_command_capture,omitempty"`
+
+	// FileIntegrity toggles the checksum-baseline subsystem. Mirrors the
+	// control plane's models.FileIntegrityConfig. Nil means "leave the agent
+	// default" (disabled); when present, Enabled drives whether the agent
+	// builds and monitors the baseline. Distinct from EnableFile, which only
+	// governs file event emission.
+	FileIntegrity *NativeFileIntegrityConfig `json:"file_integrity,omitempty" yaml:"file_integrity,omitempty"`
+}
+
+// NativeFileIntegrityConfig mirrors ebpf.FileIntegrityConfig on the wire. Only
+// the fields the control plane sets are carried; the agent fills defaults for
+// anything unset when Enabled is true.
+type NativeFileIntegrityConfig struct {
+	Enabled        bool     `json:"enabled" yaml:"enabled"`
+	Paths          []string `json:"paths,omitempty" yaml:"paths,omitempty"`
+	Exclude        []string `json:"exclude,omitempty" yaml:"exclude,omitempty"`
+	HashAlgo       string   `json:"hash_algo,omitempty" yaml:"hash_algo,omitempty"`
+	SuppressPkgMgr bool     `json:"suppress_pkg_mgr,omitempty" yaml:"suppress_pkg_mgr,omitempty"`
+	DebounceMs     int      `json:"debounce_ms,omitempty" yaml:"debounce_ms,omitempty"`
 }
 
 // NativeFileMonitorConfig scopes which file events the agent emits: write-type
