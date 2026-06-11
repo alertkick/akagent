@@ -187,3 +187,16 @@ func (a *agent) pushSecurityScanStatus() error {
 	_, _, err = a.conn.SendJSONMessage(msg)
 	return err
 }
+
+// pushSecurityScanStatusAsync fires an out-of-band scan-status report without
+// blocking the caller. Handlers that change FIM/YARA state (config update, YARA
+// rule sync) call this so the UI reflects the change within a second instead of
+// waiting up to 15 minutes for the next periodic report. The reason is logged
+// to aid debugging when a push fails.
+func (a *agent) pushSecurityScanStatusAsync(reason string) {
+	go func() {
+		if err := a.pushSecurityScanStatus(); err != nil {
+			a.log.Debug().Err(err).Str("reason", reason).Msg("agent.pushSecurityScanStatusAsync - push failed")
+		}
+	}()
+}

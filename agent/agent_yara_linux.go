@@ -43,6 +43,11 @@ func (a *agent) handleYaraSyncRulesRequest(req client.Request) {
 	}
 	resp.Message = "yara ruleset applied"
 	a.sendYaraResponse(req, resp)
+
+	// Report the fresh scan status now (the scanner just became available) so
+	// the UI reflects it within a second instead of waiting for the next
+	// periodic report. Fire-and-forget so it never blocks the response.
+	a.pushSecurityScanStatusAsync("yara.sync_rules")
 }
 
 func (a *agent) sendYaraResponse(req client.Request, response client.GeneralCommandResponse) {

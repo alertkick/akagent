@@ -398,6 +398,12 @@ func (a *agent) handleNativeConfigUpdateRequest(req client.Request) {
 		response.Message = "config updated successfully"
 	}
 
+	// FIM/YARA enablement or watch-sets may have changed. Report the fresh scan
+	// status now so the UI flips from "Not enabled" to the current state within
+	// a second, rather than waiting for the next periodic report (up to 15
+	// minutes away). Fire-and-forget so it never blocks the config response.
+	a.pushSecurityScanStatusAsync("native_config.update")
+
 	response.Config = webConfig
 	a.sendNativeConfigResponse(req, response)
 }
