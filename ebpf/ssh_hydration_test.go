@@ -76,6 +76,38 @@ func TestHydrateSSHLogin_WhoFallback(t *testing.T) {
 	}
 }
 
+func TestHydrateSSHLogin_StampsLoginWhenSourceIPUnresolved(t *testing.T) {
+	// A journald-only host (no auth.log) where `who` also can't attribute the
+	// session. Source IP is unknown, but it's still an sshd login shell — the
+	// event must be marked ssh_login so the session tracker records it.
+	h := NewSSHHydrator()
+	h.authLogPaths = []string{filepath.Join(t.TempDir(), "missing.log")}
+	h.whoRunner = func(_ context.Context) ([]whoEntry, error) {
+		return nil, os.ErrNotExist
+	}
+	event := &SecurityEvent{
+		Rule: "Process Execution",
+		Process: ProcessInfo{
+			PID: 99999, PPID: 44444,
+			Name:       "bash",
+			ParentExe:  "/usr/sbin/sshd-session", // OpenSSH 9.8+ per-session worker
+			Cmdline:    "-bash",
+			Username:   "ssidhu",
+		},
+	}
+	h.HydrateSSHLogin(event)
+
+	if v, _ := event.RawFields["ssh_login"].(bool); !v {
+		t.Fatal("ssh_login should be stamped even when the source IP is unresolved")
+	}
+	if !containsString(event.Tags, "ssh_login") {
+		t.Fatalf("expected ssh_login tag, got %v", event.Tags)
+	}
+	if _, ok := event.RawFields["ssh_source_ip"]; ok {
+		t.Fatal("ssh_source_ip should be absent when unresolved (it is enrichment only)")
+	}
+}
+
 func TestHydrateSSHLogin_NoOpForNonSSHParent(t *testing.T) {
 	h := NewSSHHydrator()
 	// Both lookups should be untouched.
