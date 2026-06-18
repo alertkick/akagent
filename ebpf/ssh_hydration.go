@@ -68,18 +68,22 @@ func NewSSHHydrator() *SSHHydrator {
 // login shell will carry, which is what we key the cache on.
 var sshAcceptLine = regexp.MustCompile(`sshd\[(\d+)\]:\s+Accepted\s+\S+\s+for\s+(\S+)\s+from\s+(\S+)\s+port\s+\d+`)
 
-// HydrateSSHLogin annotates the event with ssh_source_ip when the event
-// looks like an SSH-spawned shell. Quietly no-ops otherwise so it's safe
-// to call on every event.
+// HydrateSSHLogin marks the event as an SSH login (ssh_login=true) and, when
+// resolvable, annotates it with the remote source IP. Quietly no-ops on events
+// that aren't sshd-spawned login shells, so it's safe to call on every event.
 //
-// Heuristic:
+// Heuristic for "this is an SSH login shell":
 //   - Rule is "Process Clone" or "Process Execution" (the agent's two
 //     entry points for "new process appeared").
-//   - parent_exe is /usr/sbin/sshd OR parent_name is "sshd".
+//   - parent is sshd (parent_exe /usr/sbin/sshd or parent_name "sshd",
+//     including the OpenSSH 9.8+ per-session "sshd-session" binary).
 //   - cmdline mentions a login-shell binary — bash/sh/zsh/dash/fish/ash.
 //     For Process Clone the cmdline is sometimes still the parent's
 //     (pre-execve), so this check is best-effort: if cmdline is empty we
-//     still hydrate, since a PPID-anchored auth.log hit is high signal.
+//     still treat it as a login shell.
+//
+// The source IP is enrichment, not a gate: a host with no readable auth.log
+// (journald-only) or a privsep PID mismatch still gets its session tracked.
 func (h *SSHHydrator) HydrateSSHLogin(event *SecurityEvent) {
 	if event == nil {
 		return
@@ -100,34 +104,51 @@ func (h *SSHHydrator) HydrateSSHLogin(event *SecurityEvent) {
 		return
 	}
 
+	// This event is an sshd-spawned login shell — that fact alone makes it an
+	// SSH login, so stamp ssh_login now, BEFORE attempting source-IP lookup.
+	// Source-IP resolution is best-effort (auth.log PID match / `who`) and
+	// frequently unavailable — journald-only hosts with no /var/log/auth.log,
+	// or privilege-separated sshd where the login shell's PPID isn't the sshd
+	// pid that logged "Accepted ... from <ip>". Gating ssh_login on a resolved
+	// IP meant those sessions were never tracked at all, even though who/when/
+	// duration are perfectly knowable. The IP is enrichment, not a precondition.
+	if event.RawFields == nil {
+		event.RawFields = make(map[string]interface{})
+	}
+	event.RawFields["ssh_login"] = true
+	event.Tags = appendUniqueTag(event.Tags, "ssh_login")
+
+	// Best-effort source-IP + username enrichment. A miss leaves the session
+	// with an "unknown source" — the tracker still records it.
 	session, ok := h.lookup(p.PPID)
 	if !ok {
 		session = h.resolve(p.PPID, p.Username, p.TTY)
 		h.store(p.PPID, session)
 	}
-	if !session.hit || session.sourceIP == "" {
-		return
+	if session.hit && session.sourceIP != "" {
+		if event.Network.SrcIP == "" {
+			event.Network.SrcIP = session.sourceIP
+		}
+		event.RawFields["ssh_source_ip"] = session.sourceIP
+		if session.username != "" {
+			event.RawFields["ssh_username"] = session.username
+		}
 	}
-
-	if event.Network.SrcIP == "" {
-		event.Network.SrcIP = session.sourceIP
-	}
-	if event.RawFields == nil {
-		event.RawFields = make(map[string]interface{})
-	}
-	event.RawFields["ssh_source_ip"] = session.sourceIP
-	event.RawFields["ssh_login"] = true
-	if session.username != "" {
-		event.RawFields["ssh_username"] = session.username
-	}
-	event.Tags = appendUniqueTag(event.Tags, "ssh_login")
 }
 
 func isParentSSHD(p ProcessInfo) bool {
-	if p.ParentExe == "/usr/sbin/sshd" || p.ParentExe == "/usr/bin/sshd" {
+	// OpenSSH 9.8 split the per-connection worker into a separate "sshd-session"
+	// binary (Ubuntu 24.10+, Fedora 41+), so the login shell's parent there is
+	// sshd-session rather than sshd. Match both.
+	switch p.ParentExe {
+	case "/usr/sbin/sshd", "/usr/bin/sshd", "/usr/sbin/sshd-session", "/usr/bin/sshd-session":
 		return true
 	}
-	return p.ParentName == "sshd"
+	switch p.ParentName {
+	case "sshd", "sshd-session":
+		return true
+	}
+	return false
 }
 
 // isLoginShellCmdline returns true when cmdline names a common interactive
