@@ -423,8 +423,23 @@ func (a *NativeEBPFAgent) StartEventListener(ctx context.Context) error {
 	}
 
 	// Start the SSH login session heartbeat (re-emits live sessions, closes
-	// idle/exited ones).
+	// exited ones). Wire the tracker's callbacks first: immediate emit for the
+	// session-open event (so an untrusted login alerts at connect time), and the
+	// source-IP resolver. Then re-adopt any connections already open before the
+	// agent (re)started so they keep one stable session instead of orphaning.
 	if a.sshSessionTracker != nil {
+		a.sshSessionTracker.SetEmit(func(ev SecurityEvent) {
+			select {
+			case a.eventChan <- ev:
+			default:
+				a.recordDroppedEvent()
+			}
+		})
+		if a.sshHydrator != nil {
+			a.sshSessionTracker.SetResolveIPFunc(a.sshHydrator.ResolveForPID)
+		}
+		a.sshSessionTracker.Readopt(a.processCache)
+
 		a.readerWg.Add(1)
 		go func() {
 			defer a.readerWg.Done()

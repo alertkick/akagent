@@ -350,6 +350,17 @@ func NewNativeAgentWithConfig(configPath string) (*NativeEBPFAgent, error) {
 	return agent, nil
 }
 
+// SetSSHAllowlistFunc wires the SSH session tracker's source-IP allowlist
+// provider. Called by the agent layer with a closure over the SSH lockdown
+// manager's AllowedSourceIPs, so session classification and ac-007 / lockdown
+// all consult the single operator-curated list.
+func (a *NativeEBPFAgent) SetSSHAllowlistFunc(fn func() []string) {
+	if a == nil || a.sshSessionTracker == nil {
+		return
+	}
+	a.sshSessionTracker.SetAllowlistFunc(fn)
+}
+
 // Type returns the agent type
 func (a *NativeEBPFAgent) Type() AgentType {
 	return AgentTypeNative
