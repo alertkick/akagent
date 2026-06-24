@@ -108,6 +108,16 @@ func (a *agent) initSSHLockdown(ctx context.Context) {
 	}
 	a.platformData.lockdownManager = mgr
 
+	// Share the lockdown allowlist (AllowedSourceIPs, the same list ac-007 uses)
+	// with the SSH session tracker so a login from an address not on the list is
+	// classified "untrusted" and alerts at connect time. One curated list drives
+	// classification, ac-007, and kernel-side blocking alike.
+	if a.platformData.nativeAgent != nil {
+		a.platformData.nativeAgent.SetSSHAllowlistFunc(func() []string {
+			return mgr.State().AllowedSourceIPs
+		})
+	}
+
 	// Seed the BPF map with the host's sshd ports on startup AND
 	// subscribe to subsequent refreshes — the sshd_config reader inside
 	// the eBPF agent owns the live snapshot; we get a callback after

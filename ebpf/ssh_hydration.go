@@ -170,6 +170,26 @@ func isLoginShellCmdline(cmdline string) bool {
 	return false
 }
 
+// ResolveForPID resolves a connection worker's PID to its remote source IP and
+// username, going through the same cache + auth.log/who path as login hydration.
+// Used by the SSH session tracker to enrich worker-anchored sessions whose
+// triggering event carried no source IP (worker-own events aren't hydrated).
+// Returns empty strings on a miss.
+func (h *SSHHydrator) ResolveForPID(workerPID int, username string, tty int) (string, string) {
+	if workerPID <= 0 {
+		return "", ""
+	}
+	s, ok := h.lookup(workerPID)
+	if !ok {
+		s = h.resolve(workerPID, username, tty)
+		h.store(workerPID, s)
+	}
+	if s.hit {
+		return s.sourceIP, s.username
+	}
+	return "", ""
+}
+
 func (h *SSHHydrator) lookup(ppid int) (sshSession, bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
