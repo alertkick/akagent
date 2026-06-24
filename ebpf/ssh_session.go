@@ -596,6 +596,11 @@ func (st *sshSessionState) stamp(event *SecurityEvent, status string, now time.T
 	event.Rule = RuleSSHInboundLogin
 	event.Category = "ssh_session"
 	event.Source = "session"
+	// Synthetic session events carry no kernel-sourced hostname; stamp the host
+	// explicitly so the endpoint's "fill if empty" enrichment doesn't fall back
+	// to the endpoint node's own hostname (which mis-attributes the session in
+	// cross-host views). host_uuid is set by the endpoint from the agent id.
+	event.Hostname = hostname()
 	// High priority so the event bypasses agent-side rate limiting and is
 	// delivered promptly. An untrusted source IP is escalated to CRITICAL so it
 	// alerts immediately at connect time.
