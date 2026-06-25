@@ -454,10 +454,21 @@ func (t *SSHSessionTracker) attribute(event *SecurityEvent, cache *ProcessCache,
 		st.sessionType = classifySessionType(event.Process)
 	}
 	if captureCommands {
+		// The execve event only carries argv[0] (the BPF probe reads just the
+		// first arg to stay under the verifier's complexity budget). The full
+		// command line — capped at 256 bytes — is captured by the process-cache
+		// probe at sched_process_exec, so prefer it when it's richer so the
+		// recorded command shows arguments (e.g. "cat /etc/passwd", not "cat").
+		cmdline := event.Process.Cmdline
+		if cache != nil {
+			if e := cache.Lookup(uint32(event.Process.PID)); e != nil && len(e.Cmdline) > len(cmdline) {
+				cmdline = e.Cmdline
+			}
+		}
 		cmd := sshSessionCommand{
 			PID:     event.Process.PID,
 			Exe:     event.Process.ExePath,
-			Cmdline: redactArgv(event.Process.Cmdline),
+			Cmdline: redactArgv(cmdline),
 			TS:      st.lastActivity,
 		}
 		if len(st.commands) >= maxCommandsPerSSHSession {

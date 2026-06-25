@@ -237,6 +237,11 @@ func convertWebConfigToNative(webConfig client.NativeAgentConfig) ebpf.NativeCon
 	// Per-server opt-in: capture (redacted) command lines for SSH sessions.
 	config.SSHSessionCommandCapture = webConfig.SSHSessionCommandCapture
 
+	// ac-007 trusted source-IP allowlist for SSH login classification. Always
+	// mirror the control plane's list (including empty, which means "no policy")
+	// so removing the last entry reverts classification to "unverified".
+	config.SSHAllowedSourceIPs = webConfig.SSHAllowedSourceIPs
+
 	// File-integrity baseline subsystem. Nil means keep the agent default
 	// (disabled, with built-in monitored paths). When the control plane
 	// sends it, mirror Enabled and any overrides; Validate() fills unset
@@ -315,6 +320,7 @@ func convertNativeConfigToWeb(config ebpf.NativeConfig) client.NativeAgentConfig
 			EmitSignals: config.SignalMonitor.EmitSignals,
 		},
 		SSHSessionCommandCapture: config.SSHSessionCommandCapture,
+		SSHAllowedSourceIPs:      config.SSHAllowedSourceIPs,
 	}
 
 	return webConfig
