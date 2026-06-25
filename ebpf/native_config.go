@@ -141,6 +141,14 @@ type NativeConfig struct {
 	// is captured with its command line REDACTED at the source (known secret
 	// patterns masked before the event leaves the host). See SSHSessionTracker.
 	SSHSessionCommandCapture bool `yaml:"ssh_session_command_capture,omitempty"`
+
+	// SSHAllowedSourceIPs is the ac-007 trusted source-IP allowlist (bare IPs or
+	// CIDRs) pushed by the control plane. The SSH session tracker classifies an
+	// inbound login against it: a login from an address not on a non-empty list
+	// is "untrusted" and alerts at connect time. Empty means no allowlist is
+	// configured, so the tracker classifies "unverified" and does not alert.
+	// Mirrors the SSH-lockdown bypass list shape so the two can be unioned.
+	SSHAllowedSourceIPs []string `yaml:"ssh_allowed_source_ips,omitempty"`
 }
 
 // FileMonitorConfig scopes file-event emission to security-relevant paths.

@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"akagent/agent/sshlockdown"
@@ -108,13 +109,17 @@ func (a *agent) initSSHLockdown(ctx context.Context) {
 	}
 	a.platformData.lockdownManager = mgr
 
-	// Share the lockdown allowlist (AllowedSourceIPs, the same list ac-007 uses)
-	// with the SSH session tracker so a login from an address not on the list is
-	// classified "untrusted" and alerts at connect time. One curated list drives
-	// classification, ac-007, and kernel-side blocking alike.
-	if a.platformData.nativeAgent != nil {
-		a.platformData.nativeAgent.SetSSHAllowlistFunc(func() []string {
-			return mgr.State().AllowedSourceIPs
+	// Feed the SSH session tracker the trusted source-IP allowlist so a login
+	// from an address not on the list is classified "untrusted" and alerts at
+	// connect time. Two sources contribute, unioned: the lockdown bypass list
+	// (mgr.State().AllowedSourceIPs, also used for kernel-side blocking) and the
+	// ac-007 alerting allowlist pushed via native config. The latter lets an
+	// operator who only wants alerting (no lockdown enforcement) still get the
+	// trusted/untrusted classification — without it the badge stays "unverified"
+	// unless lockdown is configured. Empty union → "unverified" (no policy).
+	if na := a.platformData.nativeAgent; na != nil {
+		na.SetSSHAllowlistFunc(func() []string {
+			return unionSourceIPs(mgr.State().AllowedSourceIPs, na.GetNativeConfig().SSHAllowedSourceIPs)
 		})
 	}
 
@@ -404,4 +409,27 @@ func (z zerologAdapter) Warnf(format string, args ...interface{}) {
 }
 func (z zerologAdapter) Infof(format string, args ...interface{}) {
 	z.log.Info().Msgf(format, args...)
+}
+
+// unionSourceIPs merges the SSH source-IP allowlists from the lockdown bypass
+// list and the ac-007 alerting allowlist into one deduped slice. Order is
+// stable (lockdown entries first) and empty/blank entries are dropped. Returns
+// nil when both inputs are empty so the tracker classifies "unverified".
+func unionSourceIPs(lists ...[]string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, list := range lists {
+		for _, ip := range list {
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			if _, dup := seen[ip]; dup {
+				continue
+			}
+			seen[ip] = struct{}{}
+			out = append(out, ip)
+		}
+	}
+	return out
 }

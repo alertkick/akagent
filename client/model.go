@@ -250,6 +250,12 @@ type NativeAgentConfig struct {
 	// see ebpf.NativeConfig.SSHSessionCommandCapture for the privacy rationale.
 	SSHSessionCommandCapture bool `json:"ssh_session_command_capture,omitempty" yaml:"ssh_session_command_capture,omitempty"`
 
+	// SSHAllowedSourceIPs is the ac-007 trusted source-IP allowlist (bare IPs or
+	// CIDRs) pushed from the control plane. The SSH session tracker classifies an
+	// inbound login against it (trusted/untrusted) for the SSH Logins badge and
+	// the connect-time alert. Empty/unset means "no policy → unverified".
+	SSHAllowedSourceIPs []string `json:"ssh_allowed_source_ips,omitempty" yaml:"ssh_allowed_source_ips,omitempty"`
+
 	// FileIntegrity toggles the checksum-baseline subsystem. Mirrors the
 	// control plane's models.FileIntegrityConfig. Nil means "leave the agent
 	// default" (disabled); when present, Enabled drives whether the agent
