@@ -210,6 +210,108 @@ func TestSSHSession_AttributesChildren(t *testing.T) {
 	}
 }
 
+// nestedWorkerCache models an OpenSSH 9.8+ privsep tree:
+//   listener(500, sshd) → monitor(600, sshd-session) → unpriv(610, sshd-session)
+//   → bash(700) → command(800)
+func nestedWorkerCache() *ProcessCache {
+	return testCache(map[uint32]*ProcessCacheEntry{
+		500: {PID: 500, Comm: "sshd", Cmdline: "sshd: /usr/sbin/sshd -D [listener]"},
+		600: {PID: 600, Comm: "sshd-session", Exe: "/usr/sbin/sshd-session", ParentPID: 500, StartTimeNS: 600},
+		610: {PID: 610, Comm: "sshd-session", Exe: "/usr/sbin/sshd-session", ParentPID: 600, StartTimeNS: 610},
+		700: {PID: 700, Comm: "bash", ParentPID: 610, StartTimeNS: 700},
+	})
+}
+
+func sshExec(pid, ppid int, name, parentName, exe string) *SecurityEvent {
+	return &SecurityEvent{
+		AgentType: AgentTypeNative,
+		Timestamp: time.Now(),
+		Rule:      "Process Execution",
+		Category:  "process",
+		Process:   ProcessInfo{PID: pid, PPID: ppid, Name: name, ParentName: parentName, ExePath: exe},
+		RawFields: map[string]interface{}{"ssh_login": true, "ssh_source_ip": "80.6.38.150", "ssh_username": "root"},
+	}
+}
+
+// The nested monitor→unpriv sshd-session pair must collapse to ONE session,
+// anchored on the outermost worker (the monitor, child of the listener), with a
+// process_count that counts only real commands — never the sshd plumbing.
+func TestSSHSession_NestedWorkersCollapseToOne(t *testing.T) {
+	tr, emitted := newTrackerWithEmit()
+	defer withFakeAlive(map[uint32]bool{600: true})()
+	cache := nestedWorkerCache()
+
+	tr.OnEvent(sshExec(600, 500, "sshd-session", "sshd", "/usr/sbin/sshd-session"), cache, false)        // monitor
+	tr.OnEvent(sshExec(610, 600, "sshd-session", "sshd-session", "/usr/sbin/sshd-session"), cache, false) // unpriv
+	tr.OnEvent(sshExec(700, 610, "bash", "sshd-session", "/usr/bin/bash"), cache, false)                  // login shell
+	tr.OnEvent(sshExec(800, 700, "", "bash", "/usr/bin/id"), cache, false)                                // a command
+
+	if len(tr.sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1 (one connection)", len(tr.sessions))
+	}
+	if len(*emitted) != 1 {
+		t.Fatalf("open events = %d, want 1", len(*emitted))
+	}
+	if got := (*emitted)[0].RawFields["ssh_anchor_pid"]; got != 600 {
+		t.Fatalf("ssh_anchor_pid = %v, want 600 (outermost worker)", got)
+	}
+
+	evs := tr.sweep(time.Now(), cache, false)
+	if len(evs) != 1 {
+		t.Fatalf("sweep events = %d, want 1", len(evs))
+	}
+	rf := evs[0].RawFields
+	if got := rf["process_count"]; got != 2 {
+		t.Fatalf("process_count = %v, want 2 (bash + id, not the sshd plumbing)", got)
+	}
+	if got := rf["session_type"]; got != "shell" {
+		t.Fatalf("session_type = %v, want shell", got)
+	}
+}
+
+// A connection whose only observed descendants are sshd workers (e.g. the shell
+// exec was never delivered) must NOT surface as a process_count=1 / empty-type
+// "ghost" — the plumbing is never counted, so it reads as 0 processes.
+func TestSSHSession_SSHDPlumbingNotCounted(t *testing.T) {
+	tr, _ := newTrackerWithEmit()
+	defer withFakeAlive(map[uint32]bool{600: true})()
+	cache := nestedWorkerCache()
+
+	tr.OnEvent(sshExec(600, 500, "sshd-session", "sshd", "/usr/sbin/sshd-session"), cache, false)
+	tr.OnEvent(sshExec(610, 600, "sshd-session", "sshd-session", "/usr/sbin/sshd-session"), cache, false)
+
+	if len(tr.sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(tr.sessions))
+	}
+	evs := tr.sweep(time.Now(), cache, false)
+	if got := evs[0].RawFields["process_count"]; got != 0 {
+		t.Fatalf("process_count = %v, want 0 (no ghost from sshd plumbing)", got)
+	}
+	if got, ok := evs[0].RawFields["session_type"]; ok && got != "" {
+		t.Fatalf("session_type = %v, want empty", got)
+	}
+}
+
+// Session creation must not depend on best-effort parent-name hydration: a shell
+// exec that arrives without its ParentName populated still opens a session when
+// the process cache shows its parent is an sshd worker.
+func TestSSHSession_CacheFallbackOpensWithoutParentName(t *testing.T) {
+	tr, _ := newTrackerWithEmit()
+	cache := nestedWorkerCache()
+
+	// bash exec, but ParentName is empty (enrichment miss).
+	tr.OnEvent(sshExec(700, 610, "bash", "", "/usr/bin/bash"), cache, false)
+
+	if len(tr.sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1 (opened via cache fallback)", len(tr.sessions))
+	}
+	for _, st := range tr.sessions {
+		if st.anchorPID != 600 {
+			t.Fatalf("anchorPID = %d, want 600 (outermost worker)", st.anchorPID)
+		}
+	}
+}
+
 func TestSSHSession_CommandCaptureRedacts(t *testing.T) {
 	tr, _ := newTrackerWithEmit()
 	defer withFakeAlive(map[uint32]bool{900: true})()

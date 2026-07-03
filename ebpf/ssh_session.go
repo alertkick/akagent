@@ -177,7 +177,7 @@ func (t *SSHSessionTracker) OnEvent(event *SecurityEvent, cache *ProcessCache, c
 	if t == nil || event == nil {
 		return
 	}
-	if worker, listener, ok := workerForEvent(event); ok {
+	if worker, listener, ok := t.workerForEventCached(event, cache); ok {
 		t.openSession(worker, listener, event, cache)
 		// Fall through: a child of the worker (the shell, sftp-server, the
 		// exec'd command) is itself a process run within the connection, so let
@@ -188,6 +188,81 @@ func (t *SSHSessionTracker) OnEvent(event *SecurityEvent, cache *ProcessCache, c
 	if event.Category == "process" && event.Rule == "Process Execution" {
 		t.attribute(event, cache, captureCommands)
 	}
+}
+
+// workerForEventCached resolves the per-connection sshd worker for an event,
+// improving on the event-fields-only workerForEvent in two ways that matter on
+// OpenSSH 9.8+ hosts (Ubuntu 24.04+, Fedora 41+), whose privsep splits the
+// connection into a nested "sshd-session" monitor and unprivileged worker:
+//
+//  1. It collapses that nested worker chain onto the single OUTERMOST
+//     per-connection worker (resolveConnectionWorker), so the whole connection
+//     is one session instead of one per sshd-session level. Without this the
+//     monitor sshd-session anchors its own session whose only child is the
+//     inner sshd-session — the process_count=1 / empty-type "ghost" rows.
+//  2. When workerForEvent misses (the event didn't carry its parent's name
+//     because enrichment hadn't populated it yet), it falls back to the process
+//     cache to recognise a child of an sshd worker, so session creation does
+//     not depend on best-effort parent-name hydration.
+func (t *SSHSessionTracker) workerForEventCached(event *SecurityEvent, cache *ProcessCache) (worker, listener uint32, ok bool) {
+	if w, l, found := workerForEvent(event); found {
+		w, l = resolveConnectionWorker(w, l, cache)
+		return w, l, true
+	}
+	if cache != nil && event.Process.PPID > 1 && !isSSHDProcessName(event.Process) {
+		switch event.Rule {
+		case "Process Clone", "Process Execution":
+			if isSSHWorkerCacheEntry(cache.Lookup(uint32(event.Process.PPID))) {
+				w, l := resolveConnectionWorker(uint32(event.Process.PPID), 0, cache)
+				return w, l, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+// isSSHWorkerCacheEntry reports whether a process-cache entry is a per-connection
+// sshd worker, reusing the same recognition as isSSHWorkerProcess.
+func isSSHWorkerCacheEntry(e *ProcessCacheEntry) bool {
+	if e == nil {
+		return false
+	}
+	return isSSHWorkerProcess(ProcessInfo{
+		PID:     int(e.PID),
+		Name:    e.Comm,
+		ExePath: e.Exe,
+		Cmdline: e.Cmdline,
+	})
+}
+
+// resolveConnectionWorker walks up from a candidate sshd worker while its parent
+// is itself an sshd worker, returning the outermost per-connection worker and
+// the (non-worker) sshd listener above it. This folds the OpenSSH 9.8+ nested
+// monitor→unpriv sshd-session pair — and any deeper chain — onto one anchor, so
+// every descendant (inner worker, shell, commands) belongs to a single session.
+// Best-effort: it stops climbing at the first hop the cache can't resolve.
+func resolveConnectionWorker(worker, listener uint32, cache *ProcessCache) (uint32, uint32) {
+	if cache == nil || worker <= 1 {
+		return worker, listener
+	}
+	cur := worker
+	par := listener
+	for depth := 0; depth < sshAncestryWalkMaxDepth; depth++ {
+		parentPID := par
+		if entry := cache.Lookup(cur); entry != nil && entry.ParentPID > 1 {
+			parentPID = entry.ParentPID
+		}
+		if parentPID <= 1 {
+			break
+		}
+		if !isSSHWorkerCacheEntry(cache.Lookup(parentPID)) {
+			// Parent is the sshd listener (or unknown) — cur is outermost.
+			return cur, parentPID
+		}
+		cur = parentPID
+		par = 0 // deeper hops resolve the parent purely from the cache
+	}
+	return cur, par
 }
 
 // workerForEvent decides which per-connection sshd worker, if any, this event
@@ -438,6 +513,13 @@ func ipAllowed(ip string, allowlist []string) bool {
 // attribute links a process execution to the session it descends from (if any),
 // bumping the count and — when enabled — recording the redacted command line.
 func (t *SSHSessionTracker) attribute(event *SecurityEvent, cache *ProcessCache, captureCommands bool) {
+	// sshd workers are connection plumbing, not commands the user ran. Counting
+	// them (or letting one set the session type) is exactly what produced the
+	// process_count=1 / empty-type "ghost" rows on nested-worker hosts, where a
+	// monitor sshd-session's only observed child is the inner sshd-session.
+	if isSSHWorkerProcess(event.Process) || isSSHDProcessName(event.Process) {
+		return
+	}
 	key, ok := t.findAncestorSession(event, cache)
 	if !ok {
 		return
