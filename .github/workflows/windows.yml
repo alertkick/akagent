@@ -43,6 +43,18 @@ jobs:
       - name: Event Log reader integration test
         run: go test -tags noebpf -run TestEventLogReaderIntegration -v ./winevt/...
 
+      # End-to-end security-event pipeline: enable audit policy, then generate
+      # real audit events (4720 net user, 7045 sc.exe create, 4688 process,
+      # 4625 failed logon) and assert the collector emits the mapped
+      # SecurityEvents. Exercises EvtSubscribe → parse → MapEvent on genuine
+      # Windows events. Needs admin (audit policy + Security channel).
+      - name: Security event pipeline test
+        run: go test -tags noebpf -run TestSecurityEventPipeline -v -timeout 5m ./winevt/...
+
+      # FIM path: fsnotify → fim.Manager → integrity event, against a temp dir.
+      - name: FIM pipeline test
+        run: go test -tags noebpf -run TestFIMPipeline -v -timeout 3m ./winevt/...
+
   service-smoke:
     runs-on: windows-2022
     steps:
