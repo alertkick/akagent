@@ -73,8 +73,14 @@ func (a *agent) shutdownEBPF(ctx context.Context) {
 // onSystemInfo is a no-op on Windows (no stored native config yet).
 func (a *agent) onSystemInfo(req client.Request) {}
 
-// handleEBPFRequest returns false on Windows — config-push handlers for the
-// collector are not wired yet (Phase 2 follow-up).
+// handleEBPFRequest dispatches the Windows-supported server requests. Config
+// push for the collector (native_config.update etc.) is a follow-up; only
+// self-update is wired today.
 func (a *agent) handleEBPFRequest(req client.Request) bool {
+	switch req.Method {
+	case "update_agent":
+		a.goHandle("update_agent", req, a.handleUpdateAgentRequest)
+		return true
+	}
 	return false
 }
