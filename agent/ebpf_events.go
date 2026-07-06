@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || windows
 
 package agent
 
@@ -129,10 +129,7 @@ func (a *agent) StartEBPFEventSender(shutdown chan struct{}, wg *sync.WaitGroup)
 	defer statusTicker.Stop()
 
 	// Get event channel from native agent
-	var eventChan <-chan ebpf.SecurityEvent
-	if a.platformData.nativeAgent != nil {
-		eventChan = a.platformData.nativeAgent.EventChannel()
-	}
+	eventChan := a.securityEventChannel()
 
 	// Async sender: the blocking gzip+websocket send runs in its own
 	// goroutine so this drain loop never stalls on the network. If the
@@ -371,29 +368,6 @@ func (a *agent) SendSecurityEvent(event ebpf.SecurityEvent) error {
 	return err
 }
 
-func (a *agent) updateNativeAgentServiceStatus() {
-	if a.platformData.nativeAgent == nil {
-		return
-	}
-
-	status, err := a.platformData.nativeAgent.GetServiceStatus()
-	if err != nil {
-		a.log.Warn().Err(err).Msg("agent.updateNativeAgentServiceStatus - failed to get service status")
-		return
-	}
-
-	statusStr := "unknown"
-	if status.Running {
-		statusStr = "running"
-	} else if status.ActiveState == "inactive" || status.ActiveState == "embedded" {
-		statusStr = "stopped"
-	} else if status.ActiveState != "" {
-		statusStr = status.ActiveState + "/" + status.SubState
-	}
-
-	a.UpdateEBPFAgentServiceStatus("native", statusStr)
-}
-
 // UpdateEBPFAgentServiceStatus sends the service status for an eBPF agent
 func (a *agent) UpdateEBPFAgentServiceStatus(agentType string, status string) {
 	params := map[string]interface{}{
@@ -426,39 +400,4 @@ func (a *agent) UpdateEBPFAgentServiceStatus(agentType string, status string) {
 	if err != nil {
 		a.log.Err(err).Msgf("agent.UpdateEBPFAgentServiceStatus - error sending status for %s", agentType)
 	}
-}
-
-// GetNativeAgentInfo returns information about the native eBPF agent
-func (a *agent) GetNativeAgentInfo() *ebpf.AgentInfo {
-	if a.platformData.nativeAgent == nil {
-		return nil
-	}
-	info := ebpf.GetInfo(a.platformData.nativeAgent)
-	return &info
-}
-
-// EnableNativeAgent enables the native eBPF agent
-func (a *agent) EnableNativeAgent() error {
-	if a.platformData.nativeAgent == nil {
-		return errors.New("native agent not initialized")
-	}
-
-	if err := a.platformData.nativeAgent.Start(a.ctx); err != nil {
-		return err
-	}
-
-	return a.platformData.nativeAgent.StartEventListener(a.ctx)
-}
-
-// DisableNativeAgent disables the native eBPF agent
-func (a *agent) DisableNativeAgent() error {
-	if a.platformData.nativeAgent == nil {
-		return errors.New("native agent not initialized")
-	}
-
-	if err := a.platformData.nativeAgent.StopEventListener(); err != nil {
-		return err
-	}
-
-	return a.platformData.nativeAgent.Stop(a.ctx)
 }
