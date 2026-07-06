@@ -1,6 +1,6 @@
 //go:build linux
 
-package checks
+package ports
 
 import (
 	"bufio"
@@ -12,47 +12,54 @@ import (
 	"strings"
 )
 
-// GetSystemListeningPorts returns all listening ports for system info collection
-// This is separate from the monitoring check to avoid circular dependencies
-func GetSystemListeningPorts() ([]SystemPortInfo, error) {
-	var ports []SystemPortInfo
+// GetListeningPorts returns all listening ports on the system
+func GetListeningPorts() ([]ListeningPort, error) {
+	var ports []ListeningPort
 
 	// Read TCP ports
-	tcpPorts, err := readNetFileForSystemInfo("/proc/net/tcp", "tcp")
-	if err == nil {
+	tcpPorts, err := readNetFile("/proc/net/tcp", "tcp")
+	if err != nil {
+		log.Warn().Err(err).Msg("ports.GetListeningPorts - error reading TCP ports")
+	} else {
 		ports = append(ports, tcpPorts...)
 	}
 
 	// Read TCP6 ports
-	tcp6Ports, err := readNetFileForSystemInfo("/proc/net/tcp6", "tcp6")
-	if err == nil {
+	tcp6Ports, err := readNetFile("/proc/net/tcp6", "tcp6")
+	if err != nil {
+		log.Warn().Err(err).Msg("ports.GetListeningPorts - error reading TCP6 ports")
+	} else {
 		ports = append(ports, tcp6Ports...)
 	}
 
 	// Read UDP ports
-	udpPorts, err := readNetFileForSystemInfo("/proc/net/udp", "udp")
-	if err == nil {
+	udpPorts, err := readNetFile("/proc/net/udp", "udp")
+	if err != nil {
+		log.Warn().Err(err).Msg("ports.GetListeningPorts - error reading UDP ports")
+	} else {
 		ports = append(ports, udpPorts...)
 	}
 
 	// Read UDP6 ports
-	udp6Ports, err := readNetFileForSystemInfo("/proc/net/udp6", "udp6")
-	if err == nil {
+	udp6Ports, err := readNetFile("/proc/net/udp6", "udp6")
+	if err != nil {
+		log.Warn().Err(err).Msg("ports.GetListeningPorts - error reading UDP6 ports")
+	} else {
 		ports = append(ports, udp6Ports...)
 	}
 
 	return ports, nil
 }
 
-// readNetFileForSystemInfo reads /proc/net/{tcp,tcp6,udp,udp6} and extracts listening ports
-func readNetFileForSystemInfo(path string, protocol string) ([]SystemPortInfo, error) {
+// readNetFile reads /proc/net/{tcp,tcp6,udp,udp6} and extracts listening ports
+func readNetFile(path string, protocol string) ([]ListeningPort, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
-	var ports []SystemPortInfo
+	var ports []ListeningPort
 	scanner := bufio.NewScanner(file)
 
 	// Skip header line
@@ -99,7 +106,7 @@ func readNetFileForSystemInfo(path string, protocol string) ([]SystemPortInfo, e
 		}
 
 		// Parse the address and port
-		addr, port, err := parseNetAddress(localAddr, protocol)
+		addr, port, err := parseAddress(localAddr, protocol)
 		if err != nil {
 			continue
 		}
@@ -107,7 +114,7 @@ func readNetFileForSystemInfo(path string, protocol string) ([]SystemPortInfo, e
 		// Get inode (field 9)
 		inode := fields[9]
 
-		ports = append(ports, SystemPortInfo{
+		ports = append(ports, ListeningPort{
 			Port:     port,
 			Protocol: protocol,
 			Address:  addr,
@@ -118,8 +125,8 @@ func readNetFileForSystemInfo(path string, protocol string) ([]SystemPortInfo, e
 	return ports, scanner.Err()
 }
 
-// parseNetAddress parses the hex-encoded address from /proc/net files
-func parseNetAddress(hexAddr string, protocol string) (string, uint16, error) {
+// parseAddress parses the hex-encoded address from /proc/net files
+func parseAddress(hexAddr string, protocol string) (string, uint16, error) {
 	parts := strings.Split(hexAddr, ":")
 	if len(parts) != 2 {
 		return "", 0, fmt.Errorf("invalid address format: %s", hexAddr)
@@ -157,4 +164,3 @@ func parseNetAddress(hexAddr string, protocol string) (string, uint16, error) {
 
 	return ip.String(), port, nil
 }
-

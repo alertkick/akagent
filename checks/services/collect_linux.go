@@ -1,17 +1,36 @@
 //go:build linux
 
-package checks
+package services
 
 import (
 	"bufio"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 )
 
-// GetSystemServices returns all systemd services for system info collection
-// This is separate from the monitoring check to avoid circular dependencies
-func GetSystemServices() ([]SystemServiceInfo, error) {
+// isCriticalService determines if a service is considered critical
+func isCriticalService(name string) bool {
+	criticalServices := map[string]bool{
+		"sshd.service":             true,
+		"ssh.service":              true,
+		"systemd-journald.service": true,
+		"systemd-udevd.service":    true,
+		"systemd-logind.service":   true,
+		"cron.service":             true,
+		"rsyslog.service":          true,
+		"dbus.service":             true,
+		"NetworkManager.service":   true,
+		"docker.service":           true,
+		"containerd.service":       true,
+		"kubelet.service":          true,
+	}
+	return criticalServices[name]
+}
+
+// GetRunningServices returns all systemd services on the system
+func GetRunningServices() ([]ServiceInfo, error) {
 	// Use systemctl to list all services with their status
 	cmd := exec.Command("systemctl", "list-units", "--type=service", "--all", "--no-pager", "--plain", "--no-legend")
 	output, err := cmd.Output()
@@ -20,11 +39,11 @@ func GetSystemServices() ([]SystemServiceInfo, error) {
 		cmd = exec.Command("systemctl", "list-units", "--type=service", "--all", "--no-pager", "--no-legend")
 		output, err = cmd.Output()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to run systemctl: %w", err)
 		}
 	}
 
-	var services []SystemServiceInfo
+	var services []ServiceInfo
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 
 	for scanner.Scan() {
@@ -50,7 +69,8 @@ func GetSystemServices() ([]SystemServiceInfo, error) {
 			continue
 		}
 
-		svc := SystemServiceInfo{
+		// Get more details for active services
+		svc := ServiceInfo{
 			Name:        name,
 			LoadState:   loadState,
 			ActiveState: activeState,
@@ -60,7 +80,7 @@ func GetSystemServices() ([]SystemServiceInfo, error) {
 
 		// Try to get PID for running services
 		if activeState == "active" && subState == "running" {
-			pid := getServiceMainPID(name)
+			pid := getServicePID(name)
 			if pid > 0 {
 				svc.MainPID = pid
 			}
@@ -72,8 +92,8 @@ func GetSystemServices() ([]SystemServiceInfo, error) {
 	return services, scanner.Err()
 }
 
-// getServiceMainPID gets the main PID of a running service
-func getServiceMainPID(serviceName string) int {
+// getServicePID gets the main PID of a running service
+func getServicePID(serviceName string) int {
 	cmd := exec.Command("systemctl", "show", serviceName, "--property=MainPID", "--value")
 	output, err := cmd.Output()
 	if err != nil {
@@ -89,3 +109,8 @@ func getServiceMainPID(serviceName string) int {
 	return pid
 }
 
+// GetAllServicesForSystemInfo returns a simplified list of services for system info
+// This is used by the periodic system info collection, not the check monitoring
+func GetAllServicesForSystemInfo() ([]ServiceInfo, error) {
+	return GetRunningServices()
+}
