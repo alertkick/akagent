@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -33,10 +32,10 @@ var protectedComms = map[string]bool{
 
 // Responder applies and tracks active-response actions.
 type Responder struct {
-	cfg       Config
-	run       func(name string, args ...string) error
-	onAudit   func(action, target, result string)
-	commOf    func(pid int) string
+	cfg     Config
+	run     func(name string, args ...string) error
+	onAudit func(action, target, result string)
+	commOf  func(pid int) string
 
 	mu        sync.Mutex
 	allowIPs  map[string]bool
@@ -167,7 +166,13 @@ func (r *Responder) KillProcess(pid int) error {
 		r.audit("kill_process", strconv.Itoa(pid), "dry-run")
 		return nil
 	}
-	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+	// os.Process.Kill sends SIGKILL on Unix and TerminateProcess on Windows,
+	// so this path cross-compiles (syscall.Kill does not exist on Windows).
+	proc, err := os.FindProcess(pid)
+	if err == nil {
+		err = proc.Kill()
+	}
+	if err != nil {
 		r.audit("kill_process", strconv.Itoa(pid), "error: "+err.Error())
 		return err
 	}

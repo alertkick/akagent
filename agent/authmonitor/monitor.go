@@ -9,7 +9,6 @@ import (
 	"os"
 	"regexp"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -214,11 +213,4 @@ func (m *Monitor) processLine(line string, now int64) {
 	if m.onFinding != nil {
 		m.onFinding(Finding{Kind: kind, Source: source, User: user, Count: count, Window: m.cfg.WindowSeconds})
 	}
-}
-
-func inodeOf(fi os.FileInfo) uint64 {
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-		return st.Ino
-	}
-	return 0
 }

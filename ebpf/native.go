@@ -27,7 +27,7 @@ const (
 	eventChannelBufferSize = 1000
 )
 
-// agentVersion is set at build time via -ldflags "-X apagent/ebpf.agentVersion=<version>"
+// agentVersion is set at build time via -ldflags "-X akagent/ebpf.agentVersion=<version>"
 var agentVersion = "0.0.0"
 
 // Event type constants (must match common.h)
