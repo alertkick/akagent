@@ -35,6 +35,11 @@ type Collector struct {
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 	started bool
+
+	// fim is the Windows file-integrity watcher (set by StartFIM on Windows;
+	// always nil elsewhere). Typed as any so this portable struct doesn't
+	// depend on the windows-only fimWatcher type.
+	fim any
 }
 
 // NewCollector builds a collector with a buffered event channel. bufSize

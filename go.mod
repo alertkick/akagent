@@ -1,9 +1,11 @@
 module akagent
+
 go 1.21.3
 
 require (
 	github.com/cilium/ebpf v0.13.2
 	github.com/coreos/go-systemd/v22 v22.5.0
+	github.com/fsnotify/fsnotify v1.7.0
 	github.com/google/uuid v1.6.0
 	github.com/rs/xid v1.5.0
 	github.com/rs/zerolog v1.33.0

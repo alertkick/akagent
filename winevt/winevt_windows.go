@@ -95,6 +95,9 @@ func (c *Collector) Start(ctx context.Context) error {
 		c.listening.Store(false)
 	}()
 
+	// Start file-integrity monitoring alongside the event-log subscriptions.
+	c.StartFIM(runCtx)
+
 	log.Info().Msgf("winevt.Start - subscribed to %d event channels", len(subs))
 	return nil
 }
