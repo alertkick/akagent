@@ -54,6 +54,11 @@ archives:
       - windows
     format: zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # NOTE: yara64.exe is not bundled yet — a Windows yara build must first be
+    # published to S3 (the akagent-yara job only builds the Linux static
+    # binaries). Until then the agent's scanner falls back to yara64.exe on
+    # PATH and stays dormant if absent. Add a files: entry pointing at the
+    # fetched binary once it exists.
 
 nfpms:
   - id: deb

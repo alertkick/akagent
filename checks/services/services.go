@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || windows
 
 package services
 
@@ -6,11 +6,9 @@ import (
 	"akagent/checks"
 	"akagent/internal/api"
 	"akagent/logger"
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,8 +39,8 @@ func init() {
 type ServiceInfo struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"display_name,omitempty"`
-	Status      string `json:"status"`      // running, stopped, failed, etc.
-	Type        string `json:"type"`        // simple, forking, oneshot, etc.
+	Status      string `json:"status"` // running, stopped, failed, etc.
+	Type        string `json:"type"`   // simple, forking, oneshot, etc.
 	MainPID     int    `json:"main_pid,omitempty"`
 	LoadState   string `json:"load_state"`   // loaded, not-found, masked
 	ActiveState string `json:"active_state"` // active, inactive, failed, activating, deactivating
@@ -296,7 +294,7 @@ func (c *ServicesCheck) sendServiceInventory(services []ServiceInfo) {
 	metrics["active_count"] = api.Metric{Type: "active_count", Value: strconv.Itoa(activeCount), Unit: "int"}
 	metrics["inactive_count"] = api.Metric{Type: "inactive_count", Value: strconv.Itoa(inactiveCount), Unit: "int"}
 	metrics["failed_count"] = api.Metric{Type: "failed_count", Value: strconv.Itoa(failedCount), Unit: "int"}
-	
+
 	// Limit list sizes to avoid very long messages
 	if len(activeServices) > 50 {
 		activeServices = activeServices[:50]
@@ -304,7 +302,7 @@ func (c *ServicesCheck) sendServiceInventory(services []ServiceInfo) {
 	if len(failedServices) > 20 {
 		failedServices = failedServices[:20]
 	}
-	
+
 	metrics["active_services"] = api.Metric{Type: "active_services", Value: strings.Join(activeServices, ","), Unit: "string"}
 	metrics["failed_services"] = api.Metric{Type: "failed_services", Value: strings.Join(failedServices, ","), Unit: "string"}
 
@@ -337,109 +335,3 @@ func (c *ServicesCheck) sendServiceInventory(services []ServiceInfo) {
 	log.Debug().Msgf("services.sendServiceInventory - submitting: %s, total services: %d", c.Label, len(services))
 	c.resultsChan <- result
 }
-
-// isCriticalService determines if a service is considered critical
-func isCriticalService(name string) bool {
-	criticalServices := map[string]bool{
-		"sshd.service":       true,
-		"ssh.service":        true,
-		"systemd-journald.service": true,
-		"systemd-udevd.service":    true,
-		"systemd-logind.service":   true,
-		"cron.service":       true,
-		"rsyslog.service":    true,
-		"dbus.service":       true,
-		"NetworkManager.service":   true,
-		"docker.service":     true,
-		"containerd.service": true,
-		"kubelet.service":    true,
-	}
-	return criticalServices[name]
-}
-
-// GetRunningServices returns all systemd services on the system
-func GetRunningServices() ([]ServiceInfo, error) {
-	// Use systemctl to list all services with their status
-	cmd := exec.Command("systemctl", "list-units", "--type=service", "--all", "--no-pager", "--plain", "--no-legend")
-	output, err := cmd.Output()
-	if err != nil {
-		// Fallback: try without --plain flag for older systemd versions
-		cmd = exec.Command("systemctl", "list-units", "--type=service", "--all", "--no-pager", "--no-legend")
-		output, err = cmd.Output()
-		if err != nil {
-			return nil, fmt.Errorf("failed to run systemctl: %w", err)
-		}
-	}
-
-	var services []ServiceInfo
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		// Parse line: UNIT LOAD ACTIVE SUB DESCRIPTION
-		// Example: ssh.service loaded active running OpenBSD Secure Shell server
-		fields := strings.Fields(line)
-		if len(fields) < 4 {
-			continue
-		}
-
-		name := fields[0]
-		loadState := fields[1]
-		activeState := fields[2]
-		subState := fields[3]
-
-		// Only include actual service units (not templates)
-		if !strings.HasSuffix(name, ".service") {
-			continue
-		}
-
-		// Get more details for active services
-		svc := ServiceInfo{
-			Name:        name,
-			LoadState:   loadState,
-			ActiveState: activeState,
-			SubState:    subState,
-			Status:      activeState,
-		}
-
-		// Try to get PID for running services
-		if activeState == "active" && subState == "running" {
-			pid := getServicePID(name)
-			if pid > 0 {
-				svc.MainPID = pid
-			}
-		}
-
-		services = append(services, svc)
-	}
-
-	return services, scanner.Err()
-}
-
-// getServicePID gets the main PID of a running service
-func getServicePID(serviceName string) int {
-	cmd := exec.Command("systemctl", "show", serviceName, "--property=MainPID", "--value")
-	output, err := cmd.Output()
-	if err != nil {
-		return 0
-	}
-
-	pidStr := strings.TrimSpace(string(output))
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		return 0
-	}
-
-	return pid
-}
-
-// GetAllServicesForSystemInfo returns a simplified list of services for system info
-// This is used by the periodic system info collection, not the check monitoring
-func GetAllServicesForSystemInfo() ([]ServiceInfo, error) {
-	return GetRunningServices()
-}
-

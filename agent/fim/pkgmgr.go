@@ -19,6 +19,16 @@ var pkgMgrComms = map[string]bool{
 	"apk":             true,
 	"zypper":          true,
 	"pacman":          true,
+	// Windows installers/updaters. These only take effect once the Windows
+	// FIM source can attribute a change to a process (e.g. by correlating a
+	// 4688 process-creation event); the fsnotify source passes no trigger, so
+	// they are harmless no-ops until then.
+	"msiexec.exe":               true,
+	"trustedinstaller.exe":      true,
+	"tiworker.exe":              true,
+	"wuauclt.exe":               true,
+	"windowspackagemanager.exe": true,
+	"winget.exe":                true,
 }
 
 // isPkgMgrName reports whether a process comm/exe basename is a known package

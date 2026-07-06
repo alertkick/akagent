@@ -14,17 +14,11 @@ import (
 	"sync"
 )
 
-// DefaultRulesPath is where the rules-sync component writes the bundle and the
-// scanner reads it when YARA_RULES_PATH isn't set explicitly.
-const DefaultRulesPath = "/var/lib/alertkick-agent/yara/rules.yar"
-
-// BundledBinaryPath is where the agent package installs the static yara binary
-// it ships per arch. Preferred over a system yara so the rule-compilation
-// version matches across hosts.
-const BundledBinaryPath = "/usr/lib/alertkick-agent/bin/yara"
+// DefaultRulesPath and BundledBinaryPath are platform-specific and defined in
+// paths_unix.go / paths_windows.go.
 
 // resolveBinary picks the yara binary: an explicit override, else the bundled
-// static binary if present, else "yara" from PATH.
+// binary if present, else the platform default name from PATH.
 func resolveBinary(override string) string {
 	if override != "" {
 		return override
@@ -32,7 +26,7 @@ func resolveBinary(override string) string {
 	if _, err := os.Stat(BundledBinaryPath); err == nil {
 		return BundledBinaryPath
 	}
-	return "yara"
+	return defaultBinaryName
 }
 
 // Config controls the scanner.
