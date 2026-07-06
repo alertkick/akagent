@@ -79,7 +79,7 @@ bpf/generate:
 .PHONY: build
 build: bpf/generate
 	$(eval VERSION := $(shell ./version.sh))
-	go build -ldflags="-X main.Version=$(VERSION) -X apagent/ebpf.agentVersion=$(VERSION)" -o=build/${BINARY_NAME} ${MAIN_PACKAGE_PATH}
+	go build -ldflags="-X main.Version=$(VERSION) -X akagent/ebpf.agentVersion=$(VERSION)" -o=build/${BINARY_NAME} ${MAIN_PACKAGE_PATH}
 
 ## run: run the  application
 .PHONY: run

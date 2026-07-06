@@ -17,11 +17,11 @@ import (
 	"akagent/logger"
 )
 
-var fConfigDir = flag.String("configdir", "/etc/alertkick-agent", "path to config directory")
-var fConfigFile = flag.String("config", "/etc/alertkick-agent/alertkick-agent.conf", "path to config file")
+var fConfigDir = flag.String("configdir", defaultConfigDir(), "path to config directory")
+var fConfigFile = flag.String("config", defaultConfigFile(), "path to config file")
 var fDebug = flag.Bool("debug", false, "Starts the agent and displays the metrics sent in the terminal")
 var fVersion = flag.Bool("version", false, "display the version")
-var fLogFile = flag.String("logfile", "/var/log/alertkick-agent/apagent.log", "path to log file")
+var fLogFile = flag.String("logfile", defaultLogFile(), "path to log file")
 var fSetup = flag.Bool("setup", false, "setup the agent")
 
 // Version - holds the version number
@@ -40,26 +40,51 @@ func main() {
 		return
 	}
 
+	// When launched by the Windows Service Control Manager, hand control to
+	// the service handler, which drives runAgent with an SCM-controlled
+	// shutdown channel. Blocks until the service is stopped.
+	if runningAsWindowsService() {
+		if err := runWindowsService(); err != nil {
+			logger.LogFilePath = *fLogFile
+			log := logger.Get()
+			log.Error().Err(err).Msg("Windows service run failed")
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *fSetup {
+		logger.LogFilePath = *fLogFile
+		Setup()
+		return
+	}
+
+	shutdown := make(chan struct{})
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt)
+	go func() {
+		<-signals
+		close(shutdown)
+	}()
+
+	runAgent(shutdown)
+}
+
+// runAgent runs the full agent lifecycle — logging, config, endpoint
+// connection — and blocks until the shutdown channel is closed (console:
+// SIGINT; Windows service: SCM stop request).
+func runAgent(shutdown chan struct{}) {
 	fmt.Printf("Log file location: %s \n", *fLogFile)
 	logger.LogFilePath = *fLogFile
-	if *fDebug {
-		logger.SetupLogLevel(true)
-	} else {
-		logger.SetupLogLevel(false)
-	}
+	logger.SetupLogLevel(*fDebug)
 
 	log := logger.Get()
 	log.Info().Msgf("Reading configfile: %s", *fConfigFile)
 	config.LoadConfig(*fConfigFile, log)
-	config := config.GetConfig(log)
+	conf := config.GetConfig(log)
 
-	if config.Debug || *fDebug {
-		logger.SetupLogLevel(true)
-		log = logger.Get()
-	} else {
-		logger.SetupLogLevel(false)
-		log = logger.Get()
-	}
+	logger.SetupLogLevel(conf.Debug || *fDebug)
+	log = logger.Get()
 
 	hostname, kv, err := common.Uname()
 	if err != nil {
@@ -71,32 +96,19 @@ func main() {
 	// Platform-specific kernel validation (Linux only, no-op on other platforms)
 	validateKernel(log, kv)
 
-	if *fSetup {
-		Setup()
-		return
-	}
-
 	// Create a new agent
-	agent, err := agent.NewAgentClient(config, kv, log, Version)
+	agent, err := agent.NewAgentClient(conf, kv, log, Version)
 	if err != nil {
 		log.Error().Err(err).Msg("Error creating agent")
 		panic(err)
 	}
 
-	if len(config.AgentID) == 0 {
+	if len(conf.AgentID) == 0 {
 		err := errors.New("missing AgentID. Please define `agent_id` in alertkick-agent.conf")
 		log.Fatal().Err(err).Msg("Error creating agent")
 	}
 
-	shutdown := make(chan struct{})
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt)
-	go func() {
-		<-signals
-		close(shutdown)
-	}()
-
-	log.Info().Msgf("Agent ID: %s", config.AgentID)
+	log.Info().Msgf("Agent ID: %s", conf.AgentID)
 	log.Info().Msg("Starting AlertKick Agent (Version: " + Version + ")")
 
 	// Run the agent until shutdown (blocking)
@@ -188,7 +200,8 @@ func Setup() {
 		log.Panic().Msgf("Failed to verify agent token, status code: %d", resp.StatusCode)
 	}
 
-	// On successful return, create /etc/alertkick-agent/alertkick-agent.conf file
+	// On successful return, create the agent config file in the platform
+	// config directory (honours -configdir).
 	confContent := fmt.Sprintf(`{
 		"AgentToken": "%s",
 		"AgentID": "%s",
@@ -197,13 +210,15 @@ func Setup() {
 	}`, agentToken, agentID, hostLabel, subdomain)
 
 	// create config directory if it doesn't exist
-	confDir := "/etc/alertkick-agent"
+	confDir := *fConfigDir
 	if _, err := os.Stat(confDir); os.IsNotExist(err) {
 		os.MkdirAll(confDir, 0755)
 	}
 
 	confFilePath := filepath.Join(confDir, "alertkick-agent.conf")
 	// 0600 — only the agent's user can read the file (it contains AgentToken).
+	// On Windows the mode bits are close to meaningless; the install script
+	// restricts the ACL on the config directory instead.
 	err = os.WriteFile(confFilePath, []byte(confContent), 0600)
 	if err != nil {
 		log.Panic().Err(err).Msgf("Failed to update %s", confFilePath)

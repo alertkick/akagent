@@ -84,6 +84,11 @@ go-licenses save ./cmd/... --ignore akagent --save_path=./third_party_licenses -
 echo "=== Test ==="
 CGO_ENABLED=1 go test -race ./...
 
+echo "=== Windows cross-compile gate ==="
+# The windows goreleaser target only builds ./cmd; this catches Linux-only
+# syscalls creeping into any package before they break the zip build.
+GOOS=windows GOARCH=amd64 go build -tags noebpf ./...
+
 echo "=== Build & Package ==="
 rm -f ci-build.sh
 # Publish only on Jenkins tag builds. Branch builds (main, develop)
@@ -213,7 +218,7 @@ ls -lh dist/
                         PAYLOAD_FILE=$(mktemp)
                         FIRST=true
                         printf '{"version":"%s","tag":"%s","packages":[' "$TAG_VERSION" "$TAG_NAME" > "$PAYLOAD_FILE"
-                        for f in dist/*.deb dist/*.rpm dist/*.tar.gz; do
+                        for f in dist/*.deb dist/*.rpm dist/*.tar.gz dist/*.zip; do
                             [ -f "$f" ] || continue
                             BASENAME=$(basename "$f")
                             CHECKSUM=""
@@ -226,7 +231,14 @@ ls -lh dist/
                                 *.deb)    FORMAT="deb" ;;
                                 *.rpm)    FORMAT="rpm" ;;
                                 *.tar.gz) FORMAT="tar.gz" ;;
+                                *.zip)    FORMAT="zip" ;;
                                 *)        continue ;;
+                            esac
+                            # goreleaser name_template embeds the GOOS in every
+                            # archive/package filename; deb/rpm are Linux-only formats.
+                            case "$BASENAME" in
+                                *windows*) OS="windows" ;;
+                                *)         OS="linux" ;;
                             esac
                             case "$BASENAME" in
                                 *amd64*|*x86_64*) ARCH="amd64" ;;
@@ -235,8 +247,8 @@ ls -lh dist/
                             esac
 
                             if [ "$FIRST" = true ]; then FIRST=false; else printf ',' >> "$PAYLOAD_FILE"; fi
-                            printf '{"os":"linux","arch":"%s","format":"%s","filename":"%s","checksum":"%s","size":%s}' \
-                                "$ARCH" "$FORMAT" "$BASENAME" "$CHECKSUM" "$SIZE" >> "$PAYLOAD_FILE"
+                            printf '{"os":"%s","arch":"%s","format":"%s","filename":"%s","checksum":"%s","size":%s}' \
+                                "$OS" "$ARCH" "$FORMAT" "$BASENAME" "$CHECKSUM" "$SIZE" >> "$PAYLOAD_FILE"
                         done
                         printf ']}' >> "$PAYLOAD_FILE"
 
