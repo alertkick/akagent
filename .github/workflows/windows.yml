@@ -1,0 +1,118 @@
+name: windows
+
+# Continuous validation of the Windows agent on real Windows Server runners.
+# Cross-compilation (in the main Jenkins build) only proves it compiles; this
+# proves the Windows-only code paths — gopsutil/SCM/registry collectors, the
+# wevtapi Event Log bindings, and the SCM service handshake — actually run.
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21.3'
+          cache: true
+
+      - name: Build (windows, noebpf)
+        run: go build -tags noebpf ./...
+
+      - name: go vet
+        run: go vet -tags noebpf ./...
+
+      # Runs the Windows-native collector smoke tests (memory/disk/services/
+      # packages/ports) plus the portable unit tests, on real Windows. The
+      # winevt Event Log integration test needs the elevated step below, so
+      # it is skipped here via -short.
+      - name: Unit + collector tests
+        run: go test -tags noebpf -short ./...
+
+      # The Event Log reader integration test writes to the Application log
+      # (eventcreate) and reads it back through EvtSubscribe. Runners are
+      # elevated, so this validates the raw wevtapi bindings end-to-end.
+      - name: Event Log reader integration test
+        run: go test -tags noebpf -run TestEventLogReaderIntegration -v ./winevt/...
+
+  service-smoke:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21.3'
+          cache: true
+
+      - name: Build agent exe
+        run: go build -tags noebpf -o alertkick-agent.exe ./cmd
+
+      # Registers the built exe as a Windows service, starts it, asserts the
+      # SCM reports Running (proving the svc.Handler handshake), then stops it.
+      # A dummy config gets the agent past its AgentID check into the
+      # background connect-retry loop; the bogus endpoint never connects, which
+      # is fine — we only assert the service stays up.
+      - name: Service lifecycle smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = "$PWD\alertkick-agent.exe"
+          $dataDir = "$env:ProgramData\AlertKick"
+          New-Item -ItemType Directory -Force -Path "$dataDir\logs" | Out-Null
+          @"
+          {
+              "AgentToken": "ci-dummy-token",
+              "Subdomain":  "ci",
+              "AgentName":  "ci-runner",
+              "AgentID":    "ci-smoke-test",
+              "Endpoint":   "127.0.0.1:65500"
+          }
+          "@ | Set-Content -Path "$dataDir\alertkick-agent.conf" -Encoding ascii
+
+          $svc = "AlertKickAgentCI"
+          $bin = '"' + $exe + '"'
+          New-Service -Name $svc -BinaryPathName $bin -StartupType Manual -DisplayName "AlertKick Agent CI" | Out-Null
+
+          try {
+            Start-Service -Name $svc
+            # svc.Handler must report RUNNING; poll up to 20s.
+            $running = $false
+            for ($i = 0; $i -lt 20; $i++) {
+              Start-Sleep -Seconds 1
+              if ((Get-Service -Name $svc).Status -eq "Running") { $running = $true; break }
+            }
+            if (-not $running) {
+              Get-Content "$dataDir\logs\alertkick-agent.log" -Tail 40 -ErrorAction SilentlyContinue
+              throw "service did not reach Running state (SCM handshake failed)"
+            }
+            Write-Host "Service reached Running."
+
+            # It must STAY running (not crash-loop) for a few seconds.
+            Start-Sleep -Seconds 5
+            if ((Get-Service -Name $svc).Status -ne "Running") {
+              Get-Content "$dataDir\logs\alertkick-agent.log" -Tail 40 -ErrorAction SilentlyContinue
+              throw "service did not stay Running (crash loop?)"
+            }
+            Write-Host "Service stable. Stopping."
+
+            Stop-Service -Name $svc -Force
+            for ($i = 0; $i -lt 20; $i++) {
+              Start-Sleep -Seconds 1
+              if ((Get-Service -Name $svc).Status -eq "Stopped") { break }
+            }
+            if ((Get-Service -Name $svc).Status -ne "Stopped") {
+              throw "service did not stop cleanly (SCM Stop not handled)"
+            }
+            Write-Host "Service stopped cleanly. SCM handshake OK."
+          }
+          finally {
+            sc.exe delete $svc | Out-Null
+          }

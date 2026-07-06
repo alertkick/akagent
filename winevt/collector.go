@@ -40,6 +40,11 @@ type Collector struct {
 	// always nil elsewhere). Typed as any so this portable struct doesn't
 	// depend on the windows-only fimWatcher type.
 	fim any
+
+	// onRecord, when set, is called with every parsed record before mapping.
+	// Test-only hook used by the Windows integration test to verify the
+	// subscribe→render→parse path against the real Event Log.
+	onRecord func(*Record)
 }
 
 // NewCollector builds a collector with a buffered event channel. bufSize
@@ -68,6 +73,9 @@ func (c *Collector) IsListening() bool { return c.listening.Load() }
 func (c *Collector) process(r *Record) {
 	if r == nil {
 		return
+	}
+	if c.onRecord != nil {
+		c.onRecord(r)
 	}
 	if ev, ok := MapEvent(r); ok {
 		c.emit(ev)
