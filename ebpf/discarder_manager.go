@@ -176,8 +176,11 @@ func (d *DiscarderManager) SyncFromConfig(config *NativeConfig) error {
 		}
 	}
 
-	// Add exclusions from native lists
-	for comm := range config.NativeLists.BuildExcludeComms() {
+	// Add exclusions from native lists. The kernel variant excludes the
+	// write-capable file tools (cp/mv/touch/sed/vim/...): a kernel discard
+	// happens before fimNotify, so keeping them here would blind the
+	// file-integrity monitor to their changes.
+	for comm := range config.NativeLists.BuildKernelDiscardComms() {
 		if err := d.addCommDiscarder(comm); err != nil {
 			lastErr = err
 		}

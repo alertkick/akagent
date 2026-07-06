@@ -640,6 +640,35 @@ func DefaultSignalMonitorConfig() SignalMonitorConfig {
 	}
 }
 
+// AKFileWriteCapableBinaries is the subset of AKCoreutilsBinaries that can
+// create, modify, delete, or re-attribute files: file utilities, in-place
+// editors, and archivers. These must never be discarded IN-KERNEL for file
+// events — the file-integrity monitor is event-triggered, so a kernel-level
+// comm discard makes FIM permanently blind to any change made through these
+// tools (`touch /etc/x`, `cp evil /etc/shadow`, `sed -i`, `chmod`, `vim` —
+// i.e. the standard ways an operator or an attacker edits a monitored file).
+// They stay in AKCoreutilsBinaries, so the userspace noise filter still keeps
+// their raw telemetry out of storage; only the kernel discarder exempts them
+// (see BuildKernelDiscardComms).
+var AKFileWriteCapableBinaries = map[string]struct{}{
+	// File operations
+	"cp": {}, "mv": {}, "rm": {}, "mkdir": {}, "rmdir": {}, "touch": {},
+	"ln": {},
+	// Permissions / attribution
+	"chmod": {}, "chown": {}, "chgrp": {},
+	// In-place / output-writing text tools
+	"sed": {}, "awk": {}, "gawk": {}, "sort": {}, "patch": {},
+	// I/O redirection
+	"tee": {}, "dd": {},
+	// Editors
+	"vi": {}, "vim": {}, "nano": {}, "ed": {},
+	// Archivers (extraction writes files)
+	"tar": {}, "gzip": {}, "gunzip": {}, "bzip2": {}, "bunzip2": {},
+	"xz": {}, "unxz": {}, "zip": {}, "unzip": {},
+	// Temp files
+	"mktemp": {}, "tempfile": {},
+}
+
 // BuildExcludeComms returns a composite exclusion map based on config.
 // This merges all enabled exclusion lists into a single map for O(1) lookup.
 func (c *NativeListConfig) BuildExcludeComms() map[string]struct{} {
@@ -686,6 +715,22 @@ func (c *NativeListConfig) BuildExcludeComms() map[string]struct{} {
 		}
 	}
 
+	return result
+}
+
+// BuildKernelDiscardComms returns the comm set for the IN-KERNEL discarder
+// maps: BuildExcludeComms minus the write-capable file tools. The kernel
+// discard drops events before the ring buffer, upstream of fimNotify, so a
+// write-capable comm in that map is a file-integrity bypass — its file
+// modifications are invisible to FIM forever. Read-heavy viewers (cat, ls,
+// grep, find, ...) stay kernel-discarded; they are the noise volume the
+// discarder exists for. Userspace filtering keeps using the full
+// BuildExcludeComms set, which runs after fimNotify and so cannot blind FIM.
+func (c *NativeListConfig) BuildKernelDiscardComms() map[string]struct{} {
+	result := c.BuildExcludeComms()
+	for k := range AKFileWriteCapableBinaries {
+		delete(result, k)
+	}
 	return result
 }
 
