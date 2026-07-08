@@ -52,8 +52,12 @@ type fimWatcher struct {
 // begins watching them. FIM events are emitted through the collector's
 // channel. No-op if the watcher can't be created.
 func (c *Collector) StartFIM(ctx context.Context) {
-	paths := defaultFIMPaths()
+	c.startFIM(ctx, defaultFIMPaths())
+}
 
+// startFIM is the paths-injectable core of StartFIM (the integration test
+// points it at a temp directory).
+func (c *Collector) startFIM(ctx context.Context, paths []string) {
 	fw := &fimWatcher{emit: c.emit}
 
 	// YARA scanner: scans files the integrity monitor flags as changed. It
