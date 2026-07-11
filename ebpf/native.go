@@ -142,7 +142,20 @@ type NativeEBPFAgent struct {
 	droppedEvents atomic.Uint64
 	running       bool
 	listening     bool
-	shutdownChan  chan struct{}
+	// lifecycleMu serializes StartEventListener/StopEventListener as whole
+	// operations. It exists so StopEventListener can release mu before
+	// readerWg.Wait() (readers may need mu to finish) without racing a
+	// concurrent StartEventListener into readerWg.Add during the Wait.
+	// Always acquired before mu, never while holding it.
+	lifecycleMu sync.Mutex
+	// sshAllowlist is a lock-free snapshot of config.SSHAllowedSourceIPs,
+	// refreshed wherever config is (re)assigned. SSH session classification
+	// reads it via SSHAllowedSourceIPs() from paths that may run while mu is
+	// already held (Readopt fires under StartEventListener's write lock), so
+	// this must never be read through mu — doing so deadlocked agents that
+	// started with a live SSH session (stg-fe-app-eu-1, 2026-07-06/07-11).
+	sshAllowlist atomic.Value // []string
+	shutdownChan chan struct{}
 	kernelSupport KernelSupport
 	outputMode    OutputMode
 
@@ -336,6 +349,8 @@ func NewNativeAgentWithConfig(configPath string) (*NativeEBPFAgent, error) {
 		discarders:        NewDiscarderManager(),
 	}
 
+	agent.storeSSHAllowlist(config.SSHAllowedSourceIPs)
+
 	nativeLog.Info().Str("output_mode", agent.outputMode.String()).Msg("Selected BPF output mode")
 
 	// Load persisted detection rules from disk (if any)
@@ -348,6 +363,26 @@ func NewNativeAgentWithConfig(configPath string) (*NativeEBPFAgent, error) {
 	agent.initFIM()
 
 	return agent, nil
+}
+
+// storeSSHAllowlist snapshots the ac-007 SSH source-IP allowlist for
+// lock-free reads. Copied so later config mutation can't race readers.
+func (a *NativeEBPFAgent) storeSSHAllowlist(list []string) {
+	cp := make([]string, len(list))
+	copy(cp, list)
+	a.sshAllowlist.Store(cp)
+}
+
+// SSHAllowedSourceIPs returns the current ac-007 SSH source-IP allowlist
+// WITHOUT touching mu. The SSH session tracker's classify path calls this
+// (via the allowlist closure) from under StartEventListener's write lock;
+// routing it through GetNativeConfig's RLock instead self-deadlocks the
+// agent whenever it starts with a live SSH session to re-adopt.
+func (a *NativeEBPFAgent) SSHAllowedSourceIPs() []string {
+	if v, ok := a.sshAllowlist.Load().([]string); ok {
+		return v
+	}
+	return nil
 }
 
 // SetSSHAllowlistFunc wires the SSH session tracker's source-IP allowlist
@@ -489,6 +524,7 @@ func (a *NativeEBPFAgent) LoadConfig() error {
 
 	a.config = config
 	a.filter = NewEventFilter(&a.config)
+	a.storeSSHAllowlist(a.config.SSHAllowedSourceIPs)
 
 	nativeLog.Info().Str("path", a.configPath).Msg("Loaded native agent config")
 	return nil
@@ -523,6 +559,7 @@ func (a *NativeEBPFAgent) UpdateNativeConfig(newConfig NativeConfig) error {
 	// Apply the new config
 	a.config = merged
 	a.filter = NewEventFilter(&a.config)
+	a.storeSSHAllowlist(a.config.SSHAllowedSourceIPs)
 	a.alertFilter.UpdateConfig(&a.config.AlertFilter)
 	a.rateLimiter.UpdateConfig(a.config.RateLimiter)
 

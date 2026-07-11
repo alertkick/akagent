@@ -13,6 +13,12 @@ import (
 
 // StartEventListener starts reading events from all ring buffers
 func (a *NativeEBPFAgent) StartEventListener(ctx context.Context) error {
+	// Serialize with StopEventListener: it releases mu before waiting on
+	// readerWg, and a Start slipping in between would Add to the WaitGroup
+	// mid-Wait. lifecycleMu is always taken before mu.
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -453,10 +459,16 @@ func (a *NativeEBPFAgent) StartEventListener(ctx context.Context) error {
 
 // StopEventListener stops reading events
 func (a *NativeEBPFAgent) StopEventListener() error {
+	// lifecycleMu keeps a concurrent StartEventListener from Adding to
+	// readerWg while we Wait on it below (mu alone can't: we must release
+	// mu before waiting).
+	a.lifecycleMu.Lock()
+	defer a.lifecycleMu.Unlock()
+
 	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	if !a.listening {
+		a.mu.Unlock()
 		return nil
 	}
 
@@ -546,10 +558,18 @@ func (a *NativeEBPFAgent) StopEventListener() error {
 		a.ioctlReader = nil
 	}
 
+	a.listening = false
+
+	// Release mu BEFORE waiting: reader goroutines may need mu (or a lock
+	// whose holder needs mu) to finish. Holding the write lock through
+	// Wait() deadlocked the whole agent when a reader was parked in the SSH
+	// classify path (stg-fe-app-eu-1, 2026-07-06). lifecycleMu (still held)
+	// keeps Start/Stop mutually exclusive across the wait.
+	a.mu.Unlock()
+
 	// Wait for all reader goroutines to finish
 	a.readerWg.Wait()
 
-	a.listening = false
 	nativeLog.Info().Msg("Native eBPF event listener stopped")
 	return nil
 }

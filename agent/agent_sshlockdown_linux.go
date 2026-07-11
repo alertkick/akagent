@@ -117,9 +117,14 @@ func (a *agent) initSSHLockdown(ctx context.Context) {
 	// operator who only wants alerting (no lockdown enforcement) still get the
 	// trusted/untrusted classification — without it the badge stays "unverified"
 	// unless lockdown is configured. Empty union → "unverified" (no policy).
+	// This closure runs inside the session tracker's classify path, which
+	// StartEventListener invokes (via Readopt) while holding the native
+	// agent's mu write lock — so it must stay lock-free on the native agent
+	// side. GetNativeConfig() takes mu.RLock and deadlocked every agent that
+	// started with a live SSH session; use the atomic allowlist snapshot.
 	if na := a.platformData.nativeAgent; na != nil {
 		na.SetSSHAllowlistFunc(func() []string {
-			return unionSourceIPs(mgr.State().AllowedSourceIPs, na.GetNativeConfig().SSHAllowedSourceIPs)
+			return unionSourceIPs(mgr.State().AllowedSourceIPs, na.SSHAllowedSourceIPs())
 		})
 	}
 
