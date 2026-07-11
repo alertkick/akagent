@@ -183,7 +183,10 @@ func (a *agent) HandleServerRequest(req client.Request) error {
 		a.log.Debug().Msg("agent.HandleServerRequest - received system.info request")
 		a.handleSystemInfoRequest(req)
 		a.CheckScheduleGet()
-		a.onSystemInfo(req)
+		// Fetch/apply of the stored native config can take a while (and once
+		// deadlocked outright); run it off the dispatcher goroutine so a slow
+		// apply can never freeze handling of every subsequent server request.
+		a.goHandle("system.info.stored-config", req, a.onSystemInfo)
 	case "agent.refresh_check_profiles":
 		a.log.Debug().Msg("agent.HandleServerRequest - received refresh_check_profiles request")
 		a.handleRefreshCheckProfilesRequest(req)
