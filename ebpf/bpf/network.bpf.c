@@ -25,6 +25,23 @@ char LICENSE[] SEC("license") = "Dual MIT/GPL";
 #define AF_INET  2
 #define AF_INET6 10
 
+// bind() also fires for AF_NETLINK/AF_UNIX control sockets (iptables,
+// systemd, ...) and for port 0 (kernel-assigned ephemeral port). Neither
+// can be a real listening port, so drop them before touching the ring
+// buffer. sin_port/sin6_port both sit right after the 2-byte family field.
+static __always_inline int bind_is_inet_service(const void *addr) {
+    __u16 family = 0;
+    __u16 port = 0;
+
+    if (!addr)
+        return 0;
+    bpf_probe_read_user(&family, sizeof(family), addr);
+    if (family != AF_INET && family != AF_INET6)
+        return 0;
+    bpf_probe_read_user(&port, sizeof(port), (const char *)addr + 2);
+    return port != 0;
+}
+
 #ifdef USE_ENRICHED
 
 // sockaddr structures for parsing (enriched-local names to avoid conflicts)
@@ -357,6 +374,11 @@ int tracepoint__syscalls__sys_enter_bind(struct trace_event_raw_sys_enter *ctx) 
     u64 pid_tgid = bpf_get_current_pid_tgid();
     u32 tgid = (u32)(pid_tgid >> 32);
 
+    // args[1] = sockaddr
+    const void *addr = (const void *)ctx->args[1];
+    if (!bind_is_inet_service(addr))
+        return 0;
+
 #ifdef USE_ENRICHED
     struct enriched_event *event = bpf_ringbuf_reserve(&network_events_enriched, sizeof(*event), 0);
     if (!event)
@@ -371,8 +393,6 @@ int tracepoint__syscalls__sys_enter_bind(struct trace_event_raw_sys_enter *ctx) 
     event->uid = (__u32)uid_gid;
     event->gid = (__u32)(uid_gid >> 32);
 
-    // args[1] = sockaddr
-    const void *addr = (const void *)ctx->args[1];
     parse_sockaddr_enriched(event, addr);
 
     fill_process_context(event, tgid);
@@ -390,8 +410,6 @@ int tracepoint__syscalls__sys_enter_bind(struct trace_event_raw_sys_enter *ctx) 
 
     fill_common_net(event, EVENT_TYPE_BIND);
 
-    // args[1] = sockaddr
-    const void *addr = (const void *)ctx->args[1];
     parse_sockaddr(event, addr);
 
     EVENT_OUTPUT_END(network_events, event, struct network_event, ctx);
