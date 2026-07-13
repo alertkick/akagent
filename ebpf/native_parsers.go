@@ -368,7 +368,11 @@ func (a *NativeEBPFAgent) parseNetworkEvent(data []byte) (SecurityEvent, error) 
 		tags = []string{"network", "accept"}
 	case EventTypeBind:
 		rule = "Network Bind"
-		output = fmt.Sprintf("Process %s binding to port %d", comm, bpfEvent.Dport)
+		if daddr != "" {
+			output = fmt.Sprintf("Process %s (pid %d) binding to %s:%d", comm, bpfEvent.Pid, daddr, bpfEvent.Dport)
+		} else {
+			output = fmt.Sprintf("Process %s (pid %d) binding to port %d", comm, bpfEvent.Pid, bpfEvent.Dport)
+		}
 		tags = []string{"network", "bind"}
 	case EventTypeSocket:
 		rule = "Socket Create"
