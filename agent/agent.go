@@ -199,6 +199,12 @@ func (a *agent) HandleServerRequest(req client.Request) error {
 	case "host_info_types.get":
 		a.log.Debug().Msg("agent.HandleServerRequest - received host_info_types.get request")
 	default:
+		// Read-only diagnostics family (cross-platform dispatch; the
+		// diagnostics package is Linux-oriented and degrades to inline
+		// notes elsewhere).
+		if a.handleDiagnosticsRequest(req) {
+			return nil
+		}
 		// Try platform-specific eBPF handlers (Linux only)
 		if !a.handleEBPFRequest(req) {
 			a.log.Warn().Msgf("agent.HandleServerRequest - unknown method: %s", req.Method)
