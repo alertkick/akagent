@@ -45,6 +45,21 @@ func TestWindowExpiry(t *testing.T) {
 	}
 }
 
+// OpenSSH 9.8+ logs failures from the per-connection "sshd-session" process,
+// so the parser must accept that identifier as well as classic "sshd".
+func TestSSHSessionIdentifier(t *testing.T) {
+	var findings []Finding
+	m := New(Config{Threshold: 2, WindowSeconds: 60, CooldownSeconds: 100}, func(f Finding) {
+		findings = append(findings, f)
+	})
+	line := "Jul 17 10:00:00 host sshd-session[456]: Failed password for root from 203.0.113.20 port 40000 ssh2"
+	m.processLine(line, 1000)
+	m.processLine(line, 1001)
+	if len(findings) != 1 || findings[0].Source != "203.0.113.20" || findings[0].User != "root" {
+		t.Fatalf("sshd-session line not parsed as brute force: %+v", findings)
+	}
+}
+
 func TestSudoBruteForce(t *testing.T) {
 	var findings []Finding
 	m := New(Config{Threshold: 2, WindowSeconds: 60, CooldownSeconds: 100}, func(f Finding) {
