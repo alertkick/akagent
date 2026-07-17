@@ -36,6 +36,13 @@ type Config struct {
 	WindowSeconds   int      // sliding window (default 120)
 	CooldownSeconds int      // per-source re-alert suppression (default 300)
 	PollSeconds     int      // file poll interval (default 3)
+
+	// DisableJournal turns off the systemd-journal fallback used on hosts
+	// that have no auth-log file. Off by default (the fallback is enabled).
+	DisableJournal bool
+	// JournalctlPath overrides the journalctl binary used by the journal
+	// fallback. Empty means look up "journalctl" on PATH. Set by tests.
+	JournalctlPath string
 }
 
 func (c *Config) applyDefaults() {
@@ -57,7 +64,10 @@ func (c *Config) applyDefaults() {
 }
 
 // sshFail matches an sshd failed-password line, with or without "invalid user".
-var sshFail = regexp.MustCompile(`sshd\[\d+\]:\s+Failed password for (?:invalid user )?(\S+) from (\S+) port \d+`)
+// The identifier is "sshd" on classic OpenSSH and "sshd-session" on OpenSSH
+// 9.8+ (Ubuntu 24.10+, Fedora 41+, Debian 13), which split per-connection auth
+// into a separate process — both the file and journal sources see that name.
+var sshFail = regexp.MustCompile(`sshd(?:-session)?\[\d+\]:\s+Failed password for (?:invalid user )?(\S+) from (\S+) port \d+`)
 
 // sudoFail matches a sudo authentication failure line; group 1 is the invoking
 // user.
@@ -93,24 +103,35 @@ func New(cfg Config, onFinding func(Finding)) *Monitor {
 	}
 }
 
-// Start resolves the auth-log path and launches the poll loop. No-op when no
-// candidate path exists (journal-only hosts).
-func (m *Monitor) Start() {
+// Start resolves an auth source and begins monitoring. It prefers an auth-log
+// file (/var/log/auth.log, /var/log/secure); on journal-only hosts with no such
+// file it falls back to following the systemd journal. Returns a short
+// description of the chosen source ("file:/var/log/auth.log", "journal", or ""
+// when neither an auth-log file nor journalctl is available) for the caller to
+// log.
+func (m *Monitor) Start() string {
 	for _, p := range m.cfg.Paths {
 		if _, err := os.Stat(p); err == nil {
 			m.path = p
 			break
 		}
 	}
-	if m.path == "" {
-		return
+	if m.path != "" {
+		// Start reading from the current end so we don't replay history on boot.
+		if fi, err := os.Stat(m.path); err == nil {
+			m.offset = fi.Size()
+			m.inode = inodeOf(fi)
+		}
+		go m.loop()
+		return "file:" + m.path
 	}
-	// Start reading from the current end so we don't replay history on boot.
-	if fi, err := os.Stat(m.path); err == nil {
-		m.offset = fi.Size()
-		m.inode = inodeOf(fi)
+	// No auth-log file: fall back to the systemd journal where available.
+	// startJournalSource is a no-op stub on non-Linux and returns false when
+	// journalctl is absent, so Start reports "" (detection disabled).
+	if !m.cfg.DisableJournal && m.startJournalSource() {
+		return "journal"
 	}
-	go m.loop()
+	return ""
 }
 
 // Stop ends the poll loop.

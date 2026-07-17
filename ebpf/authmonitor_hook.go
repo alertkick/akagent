@@ -26,8 +26,12 @@ func (a *NativeEBPFAgent) initAuthMonitor() {
 			a.recordDroppedEvent()
 		}
 	})
-	a.authMonitor.Start()
-	nativeLog.Info().Msg("Auth-log brute-force monitor started")
+	source := a.authMonitor.Start()
+	if source == "" {
+		nativeLog.Warn().Msg("Auth brute-force monitor: no auth source (no auth.log/secure file and no journalctl); SSH/sudo brute-force detection disabled on this host")
+		return
+	}
+	nativeLog.Info().Str("source", source).Msg("Auth brute-force monitor started")
 }
 
 // buildBruteForceEvent turns an authmonitor.Finding into a high-severity
