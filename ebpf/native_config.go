@@ -149,6 +149,18 @@ type NativeConfig struct {
 	// configured, so the tracker classifies "unverified" and does not alert.
 	// Mirrors the SSH-lockdown bypass list shape so the two can be unioned.
 	SSHAllowedSourceIPs []string `yaml:"ssh_allowed_source_ips,omitempty"`
+
+	// ResponseEnforce turns a received response.block_ip into a real iptables
+	// DROP (vs a dry-run audit log). Server-controllable replacement for the
+	// RESPONSE_ENFORCE env var; the control plane resolves it from the per-host
+	// toggle AND the tenant enforcement kill switch. No omitempty: a false is a
+	// deliberate "off" the responder must honour, distinct from "unset".
+	ResponseEnforce bool `yaml:"response_enforce"`
+
+	// ResponseAllowlist is extra IPs/CIDRs the responder must never block
+	// (replacement for RESPONSE_ALLOWLIST). The responder always adds loopback
+	// and local interface addresses on top of this.
+	ResponseAllowlist []string `yaml:"response_allowlist,omitempty"`
 }
 
 // FileMonitorConfig scopes file-event emission to security-relevant paths.

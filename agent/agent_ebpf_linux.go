@@ -10,6 +10,7 @@ import (
 	"akagent/ebpf"
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,9 +26,17 @@ type platformAgentData struct {
 	lockdownManager *sshlockdown.Manager
 
 	// responder performs active-response enforcement (block IP / kill
-	// process). Constructed lazily on first command; defaults to dry-run.
-	responder     *responder.Responder
-	responderOnce sync.Once
+	// process). Constructed lazily on first command (getResponder), then
+	// live-updated via refreshResponderConfig when a new native config is
+	// applied. responderMu guards the lazy init + the pointer.
+	responder   *responder.Responder
+	responderMu sync.Mutex
+	// nativeConfigReceived flips true once the control plane's native config
+	// has been applied at least once. Until then the responder falls back to
+	// the RESPONSE_ENFORCE/RESPONSE_ALLOWLIST env vars (headless installs);
+	// after, the pushed config is authoritative so the tenant kill switch and
+	// per-host enforce toggle win.
+	nativeConfigReceived atomic.Bool
 
 	// lockdownLSM is the concrete LSM-BPF blocker handle when that path
 	// is active. The manager talks to the Blocker interface; we hold a

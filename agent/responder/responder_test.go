@@ -100,3 +100,52 @@ func TestAuditCalled(t *testing.T) {
 	}
 	_ = strconv.Itoa(0)
 }
+
+// TestUpdateConfigFlipsDryRunLive verifies enforcement can be turned on and off
+// at runtime (the server-controllable enforce toggle / tenant kill switch)
+// without rebuilding the responder.
+func TestUpdateConfigFlipsDryRunLive(t *testing.T) {
+	r := New(Config{DryRun: true}, nil)
+	fr := &fakeRunner{}
+	r.run = fr.run
+
+	// Dry-run: nothing enforced.
+	_ = r.BlockIP("8.8.8.8", 0)
+	if len(fr.cmds) != 0 {
+		t.Fatalf("dry-run must not touch iptables, got %v", fr.cmds)
+	}
+
+	// Flip to enforce live.
+	r.UpdateConfig(Config{DryRun: false})
+	if err := r.BlockIP("8.8.8.8", 0); err != nil {
+		t.Fatalf("enforce block failed: %v", err)
+	}
+	if !strings.Contains(strings.Join(fr.cmds, "\n"), "iptables -A ALERTKICK_BLOCK -s 8.8.8.8 -j DROP") {
+		t.Fatalf("expected iptables DROP after enabling enforce, got %v", fr.cmds)
+	}
+
+	// Flip back to dry-run live: no new iptables commands.
+	before := len(fr.cmds)
+	r.UpdateConfig(Config{DryRun: true})
+	_ = r.BlockIP("1.1.1.1", 0)
+	if len(fr.cmds) != before {
+		t.Fatalf("dry-run after UpdateConfig must not enforce, new cmds: %v", fr.cmds[before:])
+	}
+}
+
+// TestUpdateConfigUpdatesAllowlist verifies the allowlist can be changed live.
+func TestUpdateConfigUpdatesAllowlist(t *testing.T) {
+	r := New(Config{DryRun: false}, nil)
+	fr := &fakeRunner{}
+	r.run = fr.run
+
+	// Initially 9.9.9.9 is blockable.
+	if err := r.BlockIP("9.9.9.9", 0); err != nil {
+		t.Fatalf("block failed: %v", err)
+	}
+	// Add it to the allowlist live; now blocking must be refused.
+	r.UpdateConfig(Config{DryRun: false, Allowlist: []string{"9.9.9.9"}})
+	if err := r.BlockIP("9.9.9.9", 0); err == nil {
+		t.Fatalf("expected refusal after allowlisting 9.9.9.9")
+	}
+}

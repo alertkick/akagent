@@ -256,6 +256,20 @@ type NativeAgentConfig struct {
 	// the connect-time alert. Empty/unset means "no policy → unverified".
 	SSHAllowedSourceIPs []string `json:"ssh_allowed_source_ips,omitempty" yaml:"ssh_allowed_source_ips,omitempty"`
 
+	// ResponseEnforce turns a received response.block_ip (SSH auto-block OR a
+	// manual Kicker/triage action) into a real iptables DROP. False = dry-run
+	// (audit-log only). The control plane resolves this from the per-host toggle
+	// AND the tenant enforcement kill switch, so a false here is authoritative
+	// and must be honoured. No omitempty on the wire (see the API model): the
+	// agent must be able to tell "off" from "unset". Replaces RESPONSE_ENFORCE;
+	// the env var is the fallback only until the first config is applied.
+	ResponseEnforce bool `json:"response_enforce" yaml:"response_enforce"`
+
+	// ResponseAllowlist is extra IPs/CIDRs the responder must never block
+	// (replaces RESPONSE_ALLOWLIST). Loopback + local interface addrs are always
+	// added by the responder on top of this.
+	ResponseAllowlist []string `json:"response_allowlist,omitempty" yaml:"response_allowlist,omitempty"`
+
 	// FileIntegrity toggles the checksum-baseline subsystem. Mirrors the
 	// control plane's models.FileIntegrityConfig. Nil means "leave the agent
 	// default" (disabled); when present, Enabled drives whether the agent
