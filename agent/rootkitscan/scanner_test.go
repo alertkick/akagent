@@ -28,6 +28,31 @@ func TestFindHiddenPIDs(t *testing.T) {
 	}
 }
 
+func TestReadTgid(t *testing.T) {
+	proc := t.TempDir()
+	// Thread 819 of process 810: Tgid differs from the task id.
+	mkdir(t, filepath.Join(proc, "819"))
+	touch(t, filepath.Join(proc, "819", "status"))
+	if err := os.WriteFile(filepath.Join(proc, "819", "status"), []byte("Name:\tqemu-ga\nTgid:\t810\nPid:\t819\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTgid(proc, 819); got != 810 {
+		t.Fatalf("expected tgid 810, got %d", got)
+	}
+	// Group leader: Tgid equals the task id.
+	mkdir(t, filepath.Join(proc, "810"))
+	if err := os.WriteFile(filepath.Join(proc, "810", "status"), []byte("Name:\tqemu-ga\nTgid:\t810\nPid:\t810\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTgid(proc, 810); got != 810 {
+		t.Fatalf("expected tgid 810, got %d", got)
+	}
+	// Exited task: no status file → 0.
+	if got := readTgid(proc, 9999); got != 0 {
+		t.Fatalf("expected tgid 0 for missing task, got %d", got)
+	}
+}
+
 func TestReadSysLoadedModulesFiltersBuiltins(t *testing.T) {
 	root := t.TempDir()
 	// loadable module: has refcnt

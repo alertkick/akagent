@@ -224,8 +224,24 @@ func (s *Scanner) scanHiddenProcesses() []hiddenProc {
 			accessible = append(accessible, pid)
 		}
 	}
+	candidates := findHiddenPIDs(visible, accessible)
+	if len(candidates) == 0 {
+		return nil
+	}
+	// Second readdir pass: a process spawned between the first listing and the
+	// stat sweep shows up here and is not hidden.
+	recheck := readVisiblePIDs(s.cfg.ProcRoot)
 	var out []hiddenProc
-	for _, pid := range findHiddenPIDs(visible, accessible) {
+	for _, pid := range candidates {
+		if recheck[pid] {
+			continue
+		}
+		// /proc/<tid> stats successfully for every thread, but readdir only
+		// lists thread-group leaders — a non-leader TID is not a hidden
+		// process. tgid 0 means the task exited mid-scan; also not hidden.
+		if tgid := readTgid(s.cfg.ProcRoot, pid); tgid != pid {
+			continue
+		}
 		out = append(out, hiddenProc{pid: pid, detail: strconv.Itoa(pid) + " " + readComm(s.cfg.ProcRoot, pid)})
 	}
 	return out
@@ -252,6 +268,24 @@ func readPidMax(path string) int {
 	}
 	v, _ := strconv.Atoi(strings.TrimSpace(string(data)))
 	return v
+}
+
+// readTgid returns the thread-group id of a task, or 0 if its status file is
+// unreadable (task exited).
+func readTgid(procRoot string, pid int) int {
+	f, err := os.Open(filepath.Join(procRoot, strconv.Itoa(pid), "status"))
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		if v, ok := strings.CutPrefix(sc.Text(), "Tgid:"); ok {
+			tgid, _ := strconv.Atoi(strings.TrimSpace(v))
+			return tgid
+		}
+	}
+	return 0
 }
 
 func readComm(procRoot string, pid int) string {
