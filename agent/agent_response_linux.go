@@ -12,20 +12,52 @@ import (
 	"akagent/client"
 )
 
-// getResponder lazily constructs the active-response handler. It defaults to
-// dry-run; an operator turns on real enforcement by setting RESPONSE_ENFORCE=true,
-// and protects extra addresses via RESPONSE_ALLOWLIST (comma-separated IPs/CIDRs).
-func (a *agent) getResponder() *responder.Responder {
-	a.platformData.responderOnce.Do(func() {
-		cfg := responder.Config{
-			DryRun:    os.Getenv("RESPONSE_ENFORCE") != "true",
-			Allowlist: splitCSV(os.Getenv("RESPONSE_ALLOWLIST")),
+// responderConfig resolves the active-response enforcement settings. Once the
+// control plane has pushed a native config (nativeConfigReceived), the pushed
+// response_enforce/response_allowlist are authoritative — this is what makes the
+// per-host enforce toggle and the tenant kill switch work without an agent
+// restart. Before the first config (headless installs with no control plane),
+// it falls back to the RESPONSE_ENFORCE/RESPONSE_ALLOWLIST env vars.
+func (a *agent) responderConfig() responder.Config {
+	if a.platformData.nativeConfigReceived.Load() && a.platformData.nativeAgent != nil {
+		nc := a.platformData.nativeAgent.GetNativeConfig()
+		return responder.Config{
+			DryRun:    !nc.ResponseEnforce,
+			Allowlist: nc.ResponseAllowlist,
 		}
-		a.platformData.responder = responder.New(cfg, func(action, target, result string) {
+	}
+	return responder.Config{
+		DryRun:    os.Getenv("RESPONSE_ENFORCE") != "true",
+		Allowlist: splitCSV(os.Getenv("RESPONSE_ALLOWLIST")),
+	}
+}
+
+// getResponder lazily constructs the active-response handler on first use,
+// seeding it from responderConfig (pushed config if present, else env). It
+// defaults to dry-run: nothing is enforced until response_enforce is true (or
+// RESPONSE_ENFORCE=true on a headless host).
+func (a *agent) getResponder() *responder.Responder {
+	a.platformData.responderMu.Lock()
+	defer a.platformData.responderMu.Unlock()
+	if a.platformData.responder == nil {
+		a.platformData.responder = responder.New(a.responderConfig(), func(action, target, result string) {
 			a.log.Info().Str("action", action).Str("target", target).Str("result", result).Msg("active-response")
 		})
-	})
+	}
 	return a.platformData.responder
+}
+
+// refreshResponderConfig live-updates the responder's enforcement settings from
+// the current native config. Called after a native config is applied so an
+// enforce/kill-switch change takes effect without an agent restart. No-op if the
+// responder hasn't been constructed yet — getResponder seeds it from the current
+// config on first use.
+func (a *agent) refreshResponderConfig() {
+	a.platformData.responderMu.Lock()
+	defer a.platformData.responderMu.Unlock()
+	if a.platformData.responder != nil {
+		a.platformData.responder.UpdateConfig(a.responderConfig())
+	}
 }
 
 type responseBlockIPRequest struct {

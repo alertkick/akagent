@@ -172,6 +172,13 @@ func (a *agent) applyNativeAgentConfig(webConfig client.NativeAgentConfig) error
 		return err
 	}
 
+	// The pushed config now owns active-response enforcement (dry-run vs real
+	// iptables, allowlist). Mark it received so responderConfig() stops using
+	// the env fallback, and live-update the responder if it already exists so an
+	// enforce / kill-switch change takes effect without an agent restart.
+	a.platformData.nativeConfigReceived.Store(true)
+	a.refreshResponderConfig()
+
 	return nil
 }
 
@@ -241,6 +248,12 @@ func convertWebConfigToNative(webConfig client.NativeAgentConfig) ebpf.NativeCon
 	// mirror the control plane's list (including empty, which means "no policy")
 	// so removing the last entry reverts classification to "unverified".
 	config.SSHAllowedSourceIPs = webConfig.SSHAllowedSourceIPs
+
+	// Active-response enforcement. Always mirror the pushed value (including a
+	// false / empty allowlist) so the tenant kill switch and per-host off are
+	// authoritative. getResponder() reads these back via GetNativeConfig().
+	config.ResponseEnforce = webConfig.ResponseEnforce
+	config.ResponseAllowlist = webConfig.ResponseAllowlist
 
 	// File-integrity baseline subsystem. Nil means keep the agent default
 	// (disabled, with built-in monitored paths). When the control plane
