@@ -155,6 +155,14 @@ func (a *agent) initSSHLockdown(ctx context.Context) {
 
 	go mgr.Run(ctx)
 
+	// Sustain the dead-man heartbeat while the WebSocket is connected.
+	// Inbound requests also refresh it (handleEBPFRequest), but a quiet
+	// host can go hours without a server push — with only that source,
+	// the 10-minute dead-man silently force-unlocked every locked host
+	// shortly after its last command. Connection state is the signal the
+	// dead-man is actually meant to track.
+	go a.runLockdownHeartbeat(ctx, mgr)
+
 	// Report FIM/YARA scan status to the server so the File Integrity tab
 	// can show whether the baseline + malware ruleset are built and how the
 	// host's lock state is gating integrity monitoring. Lock transitions push
@@ -170,6 +178,25 @@ func (a *agent) initSSHLockdown(ctx context.Context) {
 type lockdownReportPayload struct {
 	Mechanism string `json:"mechanism"`
 	Reason    string `json:"reason"`
+}
+
+// runLockdownHeartbeat feeds the manager's dead-man timer from the
+// connection state once a minute. The 1-minute cadence against the
+// 10-minute threshold means the dead-man fires only after ~10 minutes
+// of genuine disconnection, matching the operator-facing help text.
+func (a *agent) runLockdownHeartbeat(ctx context.Context, mgr *sshlockdown.Manager) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if a.conn != nil && a.conn.IsConnected() {
+				mgr.Heartbeat()
+			}
+		}
+	}
 }
 
 // runLockdownMechanismReporter retries the initial mechanism push every
