@@ -7,7 +7,7 @@
 #define TASK_COMM_LEN 16
 #define MAX_FILENAME_LEN 256
 #define MAX_RESOLVED_PATH 256
-#define MAX_ARGS_LEN 256
+#define MAX_ARGS_LEN 512  // power of two — the execve argv loop masks offsets with (MAX_ARGS_LEN - 1)
 #define MAX_CMDLINE_LEN 512
 #define MAX_MODULE_NAME_LEN 64
 #define MAX_CONTAINER_ID_LEN 72

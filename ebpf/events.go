@@ -101,6 +101,10 @@ type ProcessInfo struct {
 	GrandparentName string `json:"grandparent_name,omitempty"`
 	Cwd             string `json:"cwd,omitempty"`
 	Capabilities    string `json:"capabilities,omitempty"`
+	// IsHealthcheck marks an exec whose command line matches the containing
+	// container's configured healthcheck (Config.Healthcheck.Test), so the
+	// endpoint can exempt it from recon/shell-in-container detections.
+	IsHealthcheck bool `json:"is_healthcheck,omitempty"`
 }
 
 // ContainerInfo contains information about the container context
