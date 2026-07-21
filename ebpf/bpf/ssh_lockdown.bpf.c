@@ -32,6 +32,12 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
+// The project's minimal vmlinux.h doesn't carry the bpf_map_flags enum;
+// LPM tries refuse to load without this flag (uapi value 1U << 0).
+#ifndef BPF_F_NO_PREALLOC
+#define BPF_F_NO_PREALLOC (1U << 0)
+#endif
+
 char LICENSE[] SEC("license") = "Dual MIT/GPL";
 
 // Local kernel struct declarations. The project's vmlinux.h is minimal
@@ -185,7 +191,9 @@ static __always_inline int is_v4_allowlisted(__be32 peer) {
     return v != NULL;
 }
 
-static __always_inline int is_v6_allowlisted(const __u8 *peer16) {
+// Unused until the v6 peer-extraction path lands (see the socket_accept
+// comment below); kept so the v6 trie stays exercised by the verifier.
+static __always_inline __attribute__((unused)) int is_v6_allowlisted(const __u8 *peer16) {
     struct lpm_v6_key key = {};
     key.prefixlen = 128;
     __builtin_memcpy(key.data, peer16, 16);
