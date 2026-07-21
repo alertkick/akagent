@@ -25,6 +25,12 @@ struct execve_event *unused_event __attribute__((unused));
 // command line is truncated (args_count stops at the cap).
 #define MAX_ARGS_READ 20
 
+// Per-arg copy cap. Each bpf_probe_read_user_str uses this CONSTANT size —
+// the verifier does not correlate a masked offset with a size derived from
+// it (off masked to [0,511] plus size "512 - off" is judged as off=511 AND
+// size=512), so the offset bound below reserves a full MAX_ARG_LEN instead.
+#define MAX_ARG_LEN 128
+
 DECLARE_EVENT_OUTPUT(events, struct execve_event, 256 * 1024);
 
 // Saved context for execve enter/exit correlation
@@ -104,7 +110,9 @@ int tracepoint__syscalls__sys_enter_execve(struct trace_event_raw_sys_enter *ctx
             if (!argp)
                 break;
             off &= MAX_ARGS_LEN - 1;
-            long n = bpf_probe_read_user_str(&event->args[off], MAX_ARGS_LEN - off, argp);
+            if (off > MAX_ARGS_LEN - MAX_ARG_LEN)
+                break;
+            long n = bpf_probe_read_user_str(&event->args[off], MAX_ARG_LEN, argp);
             if (n <= 0)
                 break;
             event->args_count = i + 1;
