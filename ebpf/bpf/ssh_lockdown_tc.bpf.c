@@ -25,6 +25,12 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
+// The project's minimal vmlinux.h doesn't carry the bpf_map_flags enum;
+// LPM tries refuse to load without this flag (uapi value 1U << 0).
+#ifndef BPF_F_NO_PREALLOC
+#define BPF_F_NO_PREALLOC (1U << 0)
+#endif
+
 char LICENSE[] SEC("license") = "Dual MIT/GPL";
 
 #define TC_ACT_OK   0
@@ -90,6 +96,30 @@ static __always_inline void bump(__u32 idx) {
     __u64 *cnt = bpf_map_lookup_elem(&ssh_lockdown_tc_stats, &idx);
     if (cnt) __sync_fetch_and_add(cnt, 1);
 }
+
+// The TC context struct. vmlinux.h doesn't carry the uapi __sk_buff and
+// bpf_helper_defs.h only forward-declares it. Field offsets are ABI —
+// the verifier rewrites ctx loads by offset — so this must mirror the
+// uapi layout exactly; truncated after data_end, which is all we read.
+struct __sk_buff {
+    __u32 len;
+    __u32 pkt_type;
+    __u32 mark;
+    __u32 queue_mapping;
+    __u32 protocol;
+    __u32 vlan_present;
+    __u32 vlan_tci;
+    __u32 vlan_proto;
+    __u32 priority;
+    __u32 ingress_ifindex;
+    __u32 ifindex;
+    __u32 tc_index;
+    __u32 cb[5];
+    __u32 hash;
+    __u32 tc_classid;
+    __u32 data;
+    __u32 data_end;
+};
 
 // Local Ethernet / IP / TCP headers. vmlinux.h doesn't carry them and
 // we don't want to drag in <linux/if_ether.h> for a few bytes of
