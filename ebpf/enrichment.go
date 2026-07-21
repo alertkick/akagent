@@ -43,6 +43,14 @@ type EventEnricher struct {
 	// on-disk metadata, once per container, never per event.
 	healthchecks map[string][]string
 
+	// Image reference (Config.Image, e.g. "nginx:1.25") per full container
+	// ID; "" means "looked up, not resolvable". Same lifecycle as
+	// healthchecks: immutable per container, read fork-free from docker's
+	// on-disk metadata once, pruned when the container leaves the inventory.
+	// Feeds Container.Image on events so the endpoint's registry-allowlist
+	// rule (cs-005) can evaluate.
+	images map[string]string
+
 	// Cache for namespace info
 	namespaceCache     map[int]*NamespaceInfo
 	namespaceCacheTTL  time.Duration
@@ -58,12 +66,15 @@ type EventEnricher struct {
 	crictlList func(ctx context.Context) map[string]string
 	// Overridable for tests: reads a container's configured healthcheck.
 	healthcheckRead func(containerID string) []string
+	// Overridable for tests: reads a container's image reference.
+	imageRead func(containerID string) string
 }
 
 // ContainerCacheEntry holds container-related information for caching
 type ContainerCacheEntry struct {
 	ContainerID   string // Container ID (docker/podman/containerd)
 	ContainerName string // Container name if available
+	Image         string // Image reference (e.g. "nginx:1.25") if available
 	Runtime       string // Container runtime (docker, containerd, cri-o, podman)
 	CgroupPath    string // Full cgroup path
 	CgroupID      string // Cgroup ID
@@ -111,6 +122,7 @@ func NewEventEnricherWithTTL(cacheTTL time.Duration) *EventEnricher {
 		// CLI. The periodic ticker (runInventoryRefresh) is the steady path.
 		inventoryMinGap:    5 * time.Second,
 		healthchecks:       make(map[string][]string),
+		images:             make(map[string]string),
 		namespaceCache:     make(map[int]*NamespaceInfo),
 		namespaceCacheTTL:  cacheTTL,
 		namespaceCacheTime: make(map[int]time.Time),
@@ -119,6 +131,7 @@ func NewEventEnricherWithTTL(cacheTTL time.Duration) *EventEnricher {
 		podmanList:         podmanListContainers,
 		crictlList:         crictlListContainers,
 		healthcheckRead:    readDockerHealthcheckTest,
+		imageRead:          readDockerContainerImage,
 	}
 }
 
@@ -153,6 +166,7 @@ func (e *EventEnricher) Enrich(event *SecurityEvent) {
 		event.Container = ContainerInfo{
 			ID:      containerEntry.ContainerID,
 			Name:    containerEntry.ContainerName,
+			Image:   containerEntry.Image,
 			Runtime: containerEntry.Runtime,
 		}
 		if event.RawFields == nil {
@@ -257,9 +271,55 @@ func (e *EventEnricher) lookupContainerInfo(pid int) *ContainerCacheEntry {
 	// forks a subprocess on the per-event path.
 	if info.ContainerID != "" {
 		info.ContainerName = e.resolveContainerName(info.ContainerID)
+		info.Image = e.getContainerImage(info.ContainerID)
 	}
 
 	return info
+}
+
+// getContainerImage returns the container's image reference, cached per
+// container ID (image is immutable for a container's lifetime). Same
+// fork-free read-once pattern as getHealthcheckTest; docker-only for now,
+// other runtimes resolve to "" which simply leaves Container.Image unset.
+func (e *EventEnricher) getContainerImage(containerID string) string {
+	if containerID == "" {
+		return ""
+	}
+	e.mu.RLock()
+	image, ok := e.images[containerID]
+	e.mu.RUnlock()
+	if ok {
+		return image
+	}
+	image = e.imageRead(containerID)
+	e.mu.Lock()
+	e.images[containerID] = image
+	e.mu.Unlock()
+	return image
+}
+
+// readDockerContainerImage reads Config.Image (the human image reference,
+// e.g. "nginx:1.25") from docker's config.v2.json, trying the same two roots
+// as the name/healthcheck readers. The top-level "Image" key holds the
+// sha256 image ID, so this must parse the nested Config object rather than
+// use the fast flat-field extraction.
+func readDockerContainerImage(containerID string) string {
+	for _, root := range []string{"", "/proc/1/root"} {
+		data, err := os.ReadFile(fmt.Sprintf("%s/var/lib/docker/containers/%s/config.v2.json", root, containerID))
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			Config struct {
+				Image string `json:"Image"`
+			} `json:"Config"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return ""
+		}
+		return doc.Config.Image
+	}
+	return ""
 }
 
 // resolveContainerName returns the container's name from the host inventory.
@@ -349,12 +409,17 @@ func (e *EventEnricher) RefreshInventory(ctx context.Context) {
 	}
 	e.mu.Lock()
 	e.inventory = merged
-	// Drop healthcheck entries for containers that are gone; a re-read for a
-	// still-running container is a single cheap file read, so eviction of a
-	// not-yet-inventoried container is harmless.
+	// Drop healthcheck/image entries for containers that are gone; a re-read
+	// for a still-running container is a single cheap file read, so eviction
+	// of a not-yet-inventoried container is harmless.
 	for id := range e.healthchecks {
 		if _, ok := merged[id]; !ok {
 			delete(e.healthchecks, id)
+		}
+	}
+	for id := range e.images {
+		if _, ok := merged[id]; !ok {
+			delete(e.images, id)
 		}
 	}
 	e.inventoryRefreshed = time.Now()
