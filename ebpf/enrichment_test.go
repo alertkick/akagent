@@ -263,3 +263,41 @@ func TestEnrich_StampsHealthcheckExec(t *testing.T) {
 		t.Fatalf("unrelated exec wrongly stamped as healthcheck")
 	}
 }
+
+func TestGetContainerImage_CachesAndPrunes(t *testing.T) {
+	e := NewEventEnricher()
+	id := "feed00000000000000000000000000000000000000000000000000000000feed"
+	var reads int
+	e.imageRead = func(string) string {
+		reads++
+		return "ghcr.io/alertkick/api:v4"
+	}
+
+	if got := e.getContainerImage(id); got != "ghcr.io/alertkick/api:v4" {
+		t.Fatalf("getContainerImage = %q, want image ref", got)
+	}
+	e.getContainerImage(id)
+	if reads != 1 {
+		t.Fatalf("imageRead called %d times, want 1 (cached)", reads)
+	}
+
+	// Negative results are cached too — an unreadable container shouldn't
+	// trigger a file read per event.
+	missID := "dead00000000000000000000000000000000000000000000000000000000dead"
+	e.imageRead = func(string) string { reads++; return "" }
+	e.getContainerImage(missID)
+	e.getContainerImage(missID)
+	if reads != 2 {
+		t.Fatalf("imageRead called %d times, want 2 (negative cached)", reads)
+	}
+
+	// A refresh that no longer lists the container evicts its entry.
+	e.dockerList = func(context.Context) map[string]string { return nil }
+	e.podmanList = func(context.Context) map[string]string { return nil }
+	e.crictlList = func(context.Context) map[string]string { return nil }
+	e.RefreshInventory(context.Background())
+	e.getContainerImage(id)
+	if reads != 3 {
+		t.Fatalf("imageRead called %d times after eviction, want 3", reads)
+	}
+}
