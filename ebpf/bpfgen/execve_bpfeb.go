@@ -22,7 +22,7 @@ type ExecveExecveEvent struct {
 	Gid         uint32
 	Comm        [16]int8
 	Filename    [256]int8
-	Args        [256]int8
+	Args        [512]int8
 	ArgsCount   uint32
 	RetCode     uint32
 }

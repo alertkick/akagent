@@ -101,6 +101,15 @@ func (a *agent) initSSHLockdown(ctx context.Context) {
 		MinTickInterval:  30 * time.Second,
 		Logger:           zerologAdapter{log: a.log.With().Str("subsystem", "ssh_lockdown").Logger()},
 		OnLockChange:     a.onLockStateChange(),
+		OnApplied: func(applied sshlockdown.AppliedState) {
+			// Stash + kick the reporter; never block the manager's loop.
+			s := applied
+			a.platformData.lockdownApplied.Store(&s)
+			select {
+			case a.platformData.lockdownReportKick <- struct{}{}:
+			default:
+			}
+		},
 	})
 	if err != nil {
 		a.log.Warn().Err(err).Msg("agent.initSSHLockdown - failed to construct manager")
@@ -178,6 +187,18 @@ func (a *agent) initSSHLockdown(ctx context.Context) {
 type lockdownReportPayload struct {
 	Mechanism string `json:"mechanism"`
 	Reason    string `json:"reason"`
+
+	// Live applied enforcement state (added v1.9.7). Pointers so the
+	// endpoint can tell "old agent, fields absent" from "reported false".
+	// An endpoint older than the matching release ignores the extra
+	// fields — the payload stays backward/forward compatible.
+	Locked  *bool `json:"locked,omitempty"`
+	DeadMan *bool `json:"dead_man,omitempty"`
+	// ReleaseUntil is RFC3339, present only while unlocked with an expiry.
+	ReleaseUntil string `json:"release_until,omitempty"`
+	// ApplyError is the blocker error when the last apply failed —
+	// enforcement is NOT in the reported state while non-empty.
+	ApplyError string `json:"apply_error,omitempty"`
 }
 
 // runLockdownHeartbeat feeds the manager's dead-man timer from the
@@ -211,7 +232,10 @@ func (a *agent) runLockdownHeartbeat(ctx context.Context, mgr *sshlockdown.Manag
 // via ctx so agent shutdown stops the retries cleanly.
 func (a *agent) runLockdownMechanismReporter(ctx context.Context) {
 	initialBackoff := time.Minute
-	steady := time.Hour
+	// 5 minutes (was 1h): the payload now carries live enforcement state
+	// that the UI badge trusts within a staleness window; transitions
+	// also push immediately via lockdownReportKick.
+	steady := 5 * time.Minute
 
 	// First attempt — gives the connection a few seconds to come up
 	// without the operator seeing a missed-push warning on every boot.
@@ -244,6 +268,13 @@ func (a *agent) runLockdownMechanismReporter(ctx context.Context) {
 			if err := a.pushLockdownMechanism(); err != nil {
 				a.log.Debug().Err(err).Msg("agent.runLockdownMechanismReporter - refresh push failed")
 			}
+		case <-a.platformData.lockdownReportKick:
+			// Applied-state transition (lock/unlock/dead-man/apply error) —
+			// push immediately so the UI badge tracks reality, not the
+			// 5-minute cadence. Failures self-heal on the next tick/kick.
+			if err := a.pushLockdownMechanism(); err != nil {
+				a.log.Debug().Err(err).Msg("agent.runLockdownMechanismReporter - transition push failed")
+			}
 		}
 	}
 }
@@ -255,10 +286,20 @@ func (a *agent) runLockdownMechanismReporter(ctx context.Context) {
 // channel — SendJSONMessageNoResponse is for server-request acks and
 // expects a client.Response, not a Request.
 func (a *agent) pushLockdownMechanism() error {
-	payload, err := json.Marshal(lockdownReportPayload{
+	report := lockdownReportPayload{
 		Mechanism: a.platformData.lockdownBlockerMechanism,
 		Reason:    a.platformData.lockdownBlockerReason,
-	})
+	}
+	if applied := a.platformData.lockdownApplied.Load(); applied != nil {
+		locked, deadMan := applied.Locked, applied.DeadMan
+		report.Locked = &locked
+		report.DeadMan = &deadMan
+		report.ApplyError = applied.ApplyError
+		if !applied.ReleaseUntil.IsZero() {
+			report.ReleaseUntil = applied.ReleaseUntil.UTC().Format(time.RFC3339)
+		}
+	}
+	payload, err := json.Marshal(report)
 	if err != nil {
 		return err
 	}

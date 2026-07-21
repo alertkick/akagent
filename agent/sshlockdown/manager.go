@@ -121,6 +121,32 @@ type Options struct {
 	// maintenance suppression and rescan-on-relock. Called synchronously
 	// from the ticker goroutine — keep it cheap or hand off to a goroutine.
 	OnLockChange func(locked bool)
+
+	// OnApplied, if set, is called after each blocker apply when the
+	// APPLIED state changes — unlike OnLockChange this reflects what the
+	// kernel was actually told, including the dead-man override and any
+	// blocker error. It fires once on the first apply to seed the
+	// consumer's view. Used to report live enforcement state to the
+	// control plane so the UI badge can't show "Locked" on a host that
+	// isn't. Called synchronously from the ticker goroutine — keep it
+	// cheap or hand off to a goroutine.
+	OnApplied func(AppliedState)
+}
+
+// AppliedState is what the manager last told the blocker, plus how it
+// went. Comparable so the run loop can fire OnApplied on change only.
+type AppliedState struct {
+	// Locked is the applied decision AFTER the dead-man override.
+	Locked bool
+	// DeadMan is true when the applied decision was forced by heartbeat
+	// loss rather than the configured state.
+	DeadMan bool
+	// ReleaseUntil is the deadline handed to the blocker for an unlock
+	// (zero when locked, or when unlocked with no expiry e.g. dead-man).
+	ReleaseUntil time.Time
+	// ApplyError carries the blocker error string when the apply failed —
+	// enforcement is NOT in the reported state when this is non-empty.
+	ApplyError string
 }
 
 // Logger is the minimal log surface — keeps this package free of any
@@ -301,6 +327,10 @@ func (m *Manager) Run(ctx context.Context) {
 	// carry the evidence.
 	var lastDeadMan bool
 
+	// Applied-state change detection for OnApplied.
+	var lastApplied AppliedState
+	firstApply := true
+
 	for {
 		// Take a consistent snapshot for this iteration.
 		m.mu.RLock()
@@ -350,6 +380,19 @@ func (m *Manager) Run(ctx context.Context) {
 		if err != nil {
 			m.opts.Logger.Warnf("lockdown: blocker apply failed (locked=%v, dead_man=%v): %v", decision.Locked, deadMan, err)
 		}
+
+		applied := AppliedState{Locked: decision.Locked, DeadMan: deadMan}
+		if !decision.Locked {
+			applied.ReleaseUntil = decision.ReleaseUntil
+		}
+		if err != nil {
+			applied.ApplyError = err.Error()
+		}
+		if m.opts.OnApplied != nil && (firstApply || applied != lastApplied) {
+			m.opts.OnApplied(applied)
+		}
+		lastApplied = applied
+		firstApply = false
 
 		// Compute sleep duration.
 		sleep := m.opts.MinTickInterval

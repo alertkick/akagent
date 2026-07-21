@@ -36,6 +36,13 @@ type EventEnricher struct {
 	inventoryMinGap    time.Duration // debounce floor for on-miss refreshes
 	lastMissRefresh    time.Time
 
+	// Configured healthcheck command (Config.Healthcheck.Test) per full
+	// container ID; nil means "looked up, none found". Healthcheck config is
+	// immutable for a container's lifetime, so entries live until the
+	// container leaves the inventory. Populated fork-free from docker's
+	// on-disk metadata, once per container, never per event.
+	healthchecks map[string][]string
+
 	// Cache for namespace info
 	namespaceCache     map[int]*NamespaceInfo
 	namespaceCacheTTL  time.Duration
@@ -49,6 +56,8 @@ type EventEnricher struct {
 	dockerList func(ctx context.Context) map[string]string
 	podmanList func(ctx context.Context) map[string]string
 	crictlList func(ctx context.Context) map[string]string
+	// Overridable for tests: reads a container's configured healthcheck.
+	healthcheckRead func(containerID string) []string
 }
 
 // ContainerCacheEntry holds container-related information for caching
@@ -101,6 +110,7 @@ func NewEventEnricherWithTTL(cacheTTL time.Duration) *EventEnricher {
 		// burst of events for a just-started container can't storm the runtime
 		// CLI. The periodic ticker (runInventoryRefresh) is the steady path.
 		inventoryMinGap:    5 * time.Second,
+		healthchecks:       make(map[string][]string),
 		namespaceCache:     make(map[int]*NamespaceInfo),
 		namespaceCacheTTL:  cacheTTL,
 		namespaceCacheTime: make(map[int]time.Time),
@@ -108,6 +118,7 @@ func NewEventEnricherWithTTL(cacheTTL time.Duration) *EventEnricher {
 		dockerList:         dockerListContainers,
 		podmanList:         podmanListContainers,
 		crictlList:         crictlListContainers,
+		healthcheckRead:    readDockerHealthcheckTest,
 	}
 }
 
@@ -149,6 +160,15 @@ func (e *EventEnricher) Enrich(event *SecurityEvent) {
 		}
 		event.RawFields["cgroup_path"] = containerEntry.CgroupPath
 		event.RawFields["cgroup_id"] = containerEntry.CgroupID
+
+		// Stamp execs of the container's own configured healthcheck so the
+		// endpoint can exempt them from recon/shell-in-container detections.
+		// wget/curl/nc healthchecks otherwise flood the feed every interval.
+		if event.Category == "process" && event.Rule == "Process Execution" && event.Process.Cmdline != "" {
+			if MatchesHealthcheckCmd(event.Process.Cmdline, e.getHealthcheckTest(containerEntry.ContainerID)) {
+				event.Process.IsHealthcheck = true
+			}
+		}
 	}
 
 	// Get namespace info
@@ -329,8 +349,132 @@ func (e *EventEnricher) RefreshInventory(ctx context.Context) {
 	}
 	e.mu.Lock()
 	e.inventory = merged
+	// Drop healthcheck entries for containers that are gone; a re-read for a
+	// still-running container is a single cheap file read, so eviction of a
+	// not-yet-inventoried container is harmless.
+	for id := range e.healthchecks {
+		if _, ok := merged[id]; !ok {
+			delete(e.healthchecks, id)
+		}
+	}
 	e.inventoryRefreshed = time.Now()
 	e.mu.Unlock()
+}
+
+// getHealthcheckTest returns the container's configured healthcheck command
+// (Config.Healthcheck.Test, e.g. ["CMD-SHELL", "wget -q --spider http://localhost:80/ || exit 1"]),
+// or nil when it has none or the runtime's metadata isn't readable. Results
+// (including negatives) are cached per container ID — healthcheck config is
+// immutable for a container's lifetime — and pruned when the container leaves
+// the inventory. Fork-free: the read is docker's on-disk config.v2.json.
+func (e *EventEnricher) getHealthcheckTest(containerID string) []string {
+	if containerID == "" {
+		return nil
+	}
+	e.mu.RLock()
+	test, ok := e.healthchecks[containerID]
+	e.mu.RUnlock()
+	if ok {
+		return test
+	}
+	test = e.healthcheckRead(containerID)
+	e.mu.Lock()
+	e.healthchecks[containerID] = test
+	e.mu.Unlock()
+	return test
+}
+
+// readDockerHealthcheckTest reads Config.Healthcheck.Test from docker's
+// config.v2.json, trying the same two roots as lookupDockerContainerName.
+// Non-docker runtimes (podman, containerd/k8s probes) aren't covered yet and
+// simply return nil, which means "no exemption" — never a lost event.
+func readDockerHealthcheckTest(containerID string) []string {
+	for _, root := range []string{"", "/proc/1/root"} {
+		data, err := os.ReadFile(fmt.Sprintf("%s/var/lib/docker/containers/%s/config.v2.json", root, containerID))
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			Config struct {
+				Healthcheck struct {
+					Test []string `json:"Test"`
+				} `json:"Healthcheck"`
+			} `json:"Config"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return nil
+		}
+		return doc.Config.Healthcheck.Test
+	}
+	return nil
+}
+
+// MatchesHealthcheckCmd reports whether an exec'd command line is the
+// container's configured healthcheck. A CMD-SHELL check spawns two execs we
+// need to recognize — the "<shell> -c <cmd>" wrapper and each simple command
+// inside <cmd> — while a CMD check execs its argv directly.
+func MatchesHealthcheckCmd(cmdline string, test []string) bool {
+	if len(test) < 2 || strings.TrimSpace(cmdline) == "" {
+		return false
+	}
+	switch test[0] {
+	case "CMD-SHELL":
+		shellCmd := strings.TrimSpace(test[1])
+		if shellCmd == "" {
+			return false
+		}
+		// The wrapper: "<shell> -c <shellCmd>".
+		if strings.Contains(cmdline, " -c ") && strings.HasSuffix(cmdline, shellCmd) {
+			return true
+		}
+		// A simple command run by the wrapper shell. Exact (normalized)
+		// equality, so a bare "wget" doesn't ride on a longer healthcheck.
+		norm := normalizeSimpleCmd(cmdline)
+		for _, simple := range splitShellCommands(shellCmd) {
+			if norm == normalizeSimpleCmd(simple) {
+				return true
+			}
+		}
+		return false
+	case "CMD":
+		return normalizeSimpleCmd(cmdline) == normalizeSimpleCmd(strings.Join(test[1:], " "))
+	}
+	// NONE / unknown directive.
+	return false
+}
+
+// splitShellCommands breaks a shell one-liner on command operators (&&, ||,
+// ;, |) into its simple commands. Not a full shell parser — operators inside
+// quotes are rare in healthchecks, and a miss only means the event isn't
+// exempted.
+func splitShellCommands(s string) []string {
+	for _, op := range []string{"&&", "||", ";", "|"} {
+		s = strings.ReplaceAll(s, op, "\x00")
+	}
+	parts := strings.Split(s, "\x00")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// normalizeSimpleCmd canonicalizes a simple command for comparison: the
+// binary token is reduced to its basename (the captured argv[0] may be "wget"
+// where the healthcheck says "/usr/bin/wget", or vice versa) and shell quotes
+// that the kernel-captured argv won't carry are stripped.
+func normalizeSimpleCmd(s string) string {
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return ""
+	}
+	fields[0] = filepath.Base(fields[0])
+	for i, f := range fields {
+		fields[i] = strings.Trim(f, `"'`)
+	}
+	return strings.Join(fields, " ")
 }
 
 // dockerListContainers / podmanListContainers / crictlListContainers return a

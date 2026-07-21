@@ -53,7 +53,9 @@ func (a *NativeEBPFAgent) parseExecveEvent(data []byte) (SecurityEvent, error) {
 
 	comm := int8ArrayToString(bpfEvent.Comm[:])
 	filename := int8ArrayToString(bpfEvent.Filename[:])
-	args := int8ArrayToString(bpfEvent.Args[:])
+	// args is the full argv space-joined by the BPF program, with a trailing
+	// separator after the last captured arg.
+	args := strings.TrimSpace(int8ArrayToString(bpfEvent.Args[:]))
 
 	procInfo := ProcessInfo{
 		PID:     int(bpfEvent.Pid),

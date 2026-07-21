@@ -21,6 +21,16 @@ char LICENSE[] SEC("license") = "Dual MIT/GPL";
 // Force BTF export of execve_event struct for bpf2go
 struct execve_event *unused_event __attribute__((unused));
 
+// Upper bound on argv entries copied into the event. Beyond this the
+// command line is truncated (args_count stops at the cap).
+#define MAX_ARGS_READ 20
+
+// Per-arg copy cap. Each bpf_probe_read_user_str uses this CONSTANT size —
+// the verifier does not correlate a masked offset with a size derived from
+// it (off masked to [0,511] plus size "512 - off" is judged as off=511 AND
+// size=512), so the offset bound below reserves a full MAX_ARG_LEN instead.
+#define MAX_ARG_LEN 128
+
 DECLARE_EVENT_OUTPUT(events, struct execve_event, 256 * 1024);
 
 // Saved context for execve enter/exit correlation
@@ -86,15 +96,30 @@ int tracepoint__syscalls__sys_enter_execve(struct trace_event_raw_sys_enter *ctx
         bpf_probe_read_user_str(event->filename, sizeof(event->filename), filename);
     }
 
-    // Read first argument (argv[0]) into args field
-    // Keep it simple - just read the first arg to avoid verifier complexity
+    // Read the full argv into args, space-joined. Each read appends the
+    // NUL-terminated arg at the current offset, then the NUL is overwritten
+    // with a space before the next arg; userspace trims the trailing
+    // separator. Offsets are masked with (MAX_ARGS_LEN - 1) so the verifier
+    // can bound every access without tracking the accumulated length.
     const char *const *argv = (const char *const *)ctx->args[1];
     if (argv) {
-        const char *arg0 = NULL;
-        bpf_probe_read_user(&arg0, sizeof(arg0), &argv[0]);
-        if (arg0) {
-            bpf_probe_read_user_str(event->args, sizeof(event->args), arg0);
-            event->args_count = 1;
+        u32 off = 0;
+        for (int i = 0; i < MAX_ARGS_READ; i++) {
+            const char *argp = NULL;
+            bpf_probe_read_user(&argp, sizeof(argp), &argv[i]);
+            if (!argp)
+                break;
+            off &= MAX_ARGS_LEN - 1;
+            if (off > MAX_ARGS_LEN - MAX_ARG_LEN)
+                break;
+            long n = bpf_probe_read_user_str(&event->args[off], MAX_ARG_LEN, argp);
+            if (n <= 0)
+                break;
+            event->args_count = i + 1;
+            off += n;  // n includes the terminating NUL
+            if (off >= MAX_ARGS_LEN)
+                break;
+            event->args[(off - 1) & (MAX_ARGS_LEN - 1)] = ' ';
         }
     }
 
