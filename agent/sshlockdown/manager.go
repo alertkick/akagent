@@ -296,6 +296,11 @@ func (m *Manager) Run(ctx context.Context) {
 	var lastLocked bool
 	firstEval := true
 
+	// Dead-man transitions are logged (not just applied) — a force-unlock
+	// leaves the UI showing "Locked" while SSH is open, so the journal must
+	// carry the evidence.
+	var lastDeadMan bool
+
 	for {
 		// Take a consistent snapshot for this iteration.
 		m.mu.RLock()
@@ -326,6 +331,14 @@ func (m *Manager) Run(ctx context.Context) {
 			decision = Decision{Locked: false, ReleaseUntil: time.Time{}, NextChangeAt: now.Add(m.opts.MinTickInterval)}
 			deadMan = true
 		}
+		if deadMan != lastDeadMan {
+			if deadMan {
+				m.opts.Logger.Warnf("lockdown: dead-man engaged - no control-plane heartbeat for %v, force-unlocking (last heartbeat %v)", m.opts.DeadManThreshold, heartbeat.UTC().Format(time.RFC3339))
+			} else {
+				m.opts.Logger.Warnf("lockdown: dead-man cleared - control-plane heartbeat restored, resuming configured state")
+			}
+		}
+		lastDeadMan = deadMan
 
 		// Apply to the blocker.
 		var err error
