@@ -219,6 +219,58 @@ func TestManager_HeartbeatPreventsDeadMan(t *testing.T) {
 	}
 }
 
+func TestManager_OnAppliedReportsDeadManCycle(t *testing.T) {
+	b := &NoopBlocker{}
+	clk := newFakeClock(mustParse(t, time.RFC3339, "2026-05-29T14:00:00Z"))
+
+	var mu sync.Mutex
+	var events []AppliedState
+	m, _ := NewManager(b, Options{
+		StatePath:        filepath.Join(t.TempDir(), "lockdown.json"),
+		Now:              clk.Now,
+		MinTickInterval:  1 * time.Second,
+		DeadManThreshold: 5 * time.Minute,
+		OnApplied: func(s AppliedState) {
+			mu.Lock()
+			events = append(events, s)
+			mu.Unlock()
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { m.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	last := func() (AppliedState, int) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(events) == 0 {
+			return AppliedState{}, 0
+		}
+		return events[len(events)-1], len(events)
+	}
+
+	// Seed event: locked, no dead-man.
+	waitFor(t, func() bool { s, n := last(); return n > 0 && s.Locked && !s.DeadMan })
+
+	// Heartbeat loss → applied flips to force-unlock with DeadMan set.
+	clk.Set(clk.Now().Add(6 * time.Minute))
+	waitFor(t, func() bool { s, _ := last(); return !s.Locked && s.DeadMan })
+
+	// Heartbeat returns → re-lock reported, dead-man cleared.
+	m.Heartbeat()
+	waitFor(t, func() bool { s, _ := last(); return s.Locked && !s.DeadMan })
+
+	// Steady state must not spam events: count stays put across ticks.
+	_, n1 := last()
+	time.Sleep(100 * time.Millisecond)
+	_, n2 := last()
+	if n2 != n1 {
+		t.Fatalf("OnApplied fired without a state change: %d -> %d events", n1, n2)
+	}
+}
+
 func TestManager_PersistsAcrossRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lockdown.json")
 	clk := newFakeClock(mustParse(t, time.RFC3339, "2026-05-29T14:00:00Z"))

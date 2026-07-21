@@ -64,12 +64,22 @@ type platformAgentData struct {
 	// lockdown ticker (via OnLockChange) and read by the status reporter.
 	scanStatusMu     sync.Mutex
 	lastScanRescanAt time.Time
+
+	// lockdownApplied is the latest applied enforcement state (post
+	// dead-man, including apply errors), written by the manager's
+	// OnApplied callback and read by the mechanism/state reporter.
+	// lockdownReportKick wakes the reporter for an immediate push on a
+	// transition; buffered(1) + non-blocking send so the manager's run
+	// loop never stalls on reporting.
+	lockdownApplied    atomic.Pointer[sshlockdown.AppliedState]
+	lockdownReportKick chan struct{}
 }
 
 func newPlatformAgentData() platformAgentData {
 	return platformAgentData{
 		securityEventQueue:        make([]ebpf.SecurityEvent, 0, 1000),
 		securityEventMaxQueueSize: 1000,
+		lockdownReportKick:        make(chan struct{}, 1),
 	}
 }
 
