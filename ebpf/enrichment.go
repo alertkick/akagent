@@ -36,6 +36,12 @@ type EventEnricher struct {
 	inventoryMinGap    time.Duration // debounce floor for on-miss refreshes
 	lastMissRefresh    time.Time
 
+	// dockerRoot is the docker daemon's data-root (DockerRootDir from
+	// `docker info`), refreshed alongside the inventory; "" until known. A
+	// daemon with a non-default data-root keeps config.v2.json outside
+	// /var/lib/docker, so the metadata readers try this location first.
+	dockerRoot string
+
 	// Configured healthcheck command (Config.Healthcheck.Test) per full
 	// container ID; nil means "looked up, none found". Healthcheck config is
 	// immutable for a container's lifetime, so entries live until the
@@ -68,6 +74,8 @@ type EventEnricher struct {
 	healthcheckRead func(containerID string) []string
 	// Overridable for tests: reads a container's image reference.
 	imageRead func(containerID string) string
+	// Overridable for tests: reports the docker daemon's data-root.
+	dockerRootFn func(ctx context.Context) string
 }
 
 // ContainerCacheEntry holds container-related information for caching
@@ -112,7 +120,7 @@ func NewEventEnricher() *EventEnricher {
 
 // NewEventEnricherWithTTL creates a new event enricher with custom cache TTL
 func NewEventEnricherWithTTL(cacheTTL time.Duration) *EventEnricher {
-	return &EventEnricher{
+	e := &EventEnricher{
 		containerCache:     make(map[int]*ContainerCacheEntry),
 		containerCacheTTL:  cacheTTL,
 		containerCacheTime: make(map[int]time.Time),
@@ -130,9 +138,30 @@ func NewEventEnricherWithTTL(cacheTTL time.Duration) *EventEnricher {
 		dockerList:         dockerListContainers,
 		podmanList:         podmanListContainers,
 		crictlList:         crictlListContainers,
-		healthcheckRead:    readDockerHealthcheckTest,
-		imageRead:          readDockerContainerImage,
+		dockerRootFn:       dockerDataRootDir,
 	}
+	e.healthcheckRead = func(containerID string) []string {
+		return readDockerHealthcheckTest(containerID, e.containerDirs())
+	}
+	e.imageRead = func(containerID string) string {
+		return readDockerContainerImage(containerID, e.containerDirs())
+	}
+	return e
+}
+
+// containerDirs returns the candidate docker container-metadata roots
+// (each holding containers/<id>/config.v2.json), most specific first: the
+// daemon-reported data-root — directly and through the init mount namespace —
+// then the default /var/lib/docker pair as a fallback.
+func (e *EventEnricher) containerDirs() []string {
+	e.mu.RLock()
+	root := e.dockerRoot
+	e.mu.RUnlock()
+	dirs := make([]string, 0, 4)
+	if root != "" && root != "/var/lib/docker" {
+		dirs = append(dirs, root, "/proc/1/root"+root)
+	}
+	return append(dirs, "/var/lib/docker", "/proc/1/root/var/lib/docker")
 }
 
 // SetEnabled enables or disables enrichment
@@ -160,8 +189,13 @@ func (e *EventEnricher) Enrich(event *SecurityEvent) {
 		return
 	}
 
-	// Get container info
+	// Get container info. A short-lived process (a healthcheck wget finishes
+	// in milliseconds) can exit before its /proc/<pid>/cgroup is read; a child
+	// inherits its parent's cgroup, so the parent is an equivalent source.
 	containerEntry := e.getContainerInfo(pid)
+	if containerEntry == nil && event.Process.PPID > 0 {
+		containerEntry = e.getContainerInfo(event.Process.PPID)
+	}
 	if containerEntry != nil {
 		event.Container = ContainerInfo{
 			ID:      containerEntry.ContainerID,
@@ -303,9 +337,9 @@ func (e *EventEnricher) getContainerImage(containerID string) string {
 // as the name/healthcheck readers. The top-level "Image" key holds the
 // sha256 image ID, so this must parse the nested Config object rather than
 // use the fast flat-field extraction.
-func readDockerContainerImage(containerID string) string {
-	for _, root := range []string{"", "/proc/1/root"} {
-		data, err := os.ReadFile(fmt.Sprintf("%s/var/lib/docker/containers/%s/config.v2.json", root, containerID))
+func readDockerContainerImage(containerID string, dirs []string) string {
+	for _, dir := range dirs {
+		data, err := os.ReadFile(fmt.Sprintf("%s/containers/%s/config.v2.json", dir, containerID))
 		if err != nil {
 			continue
 		}
@@ -407,8 +441,20 @@ func (e *EventEnricher) RefreshInventory(ctx context.Context) {
 			}
 		}
 	}
+	var dockerRoot string
+	if e.dockerRootFn != nil {
+		dockerRoot = e.dockerRootFn(ctx)
+	}
 	e.mu.Lock()
 	e.inventory = merged
+	if dockerRoot != "" && dockerRoot != e.dockerRoot {
+		// The data-root was unknown (first refresh) or the daemon moved — the
+		// negative healthcheck/image entries were read from the wrong place,
+		// so drop them and let the next event re-read via the right one.
+		e.dockerRoot = dockerRoot
+		e.healthchecks = make(map[string][]string)
+		e.images = make(map[string]string)
+	}
 	// Drop healthcheck/image entries for containers that are gone; a re-read
 	// for a still-running container is a single cheap file read, so eviction
 	// of a not-yet-inventoried container is harmless.
@@ -453,14 +499,23 @@ func (e *EventEnricher) getHealthcheckTest(containerID string) []string {
 // config.v2.json, trying the same two roots as lookupDockerContainerName.
 // Non-docker runtimes (podman, containerd/k8s probes) aren't covered yet and
 // simply return nil, which means "no exemption" — never a lost event.
-func readDockerHealthcheckTest(containerID string) []string {
-	for _, root := range []string{"", "/proc/1/root"} {
-		data, err := os.ReadFile(fmt.Sprintf("%s/var/lib/docker/containers/%s/config.v2.json", root, containerID))
+//
+// For a CMD-SHELL test whose command references environment variables
+// (cadvisor: "wget ... $CADVISOR_HEALTHCHECK_URL || exit 1"), the shell
+// expands them before exec'ing, so the captured argv carries the expanded
+// value while the wrapper's argv carries the literal. Both must match, so
+// the env-expanded command is appended as an extra variant after the raw
+// one — MatchesHealthcheckCmd treats every element after "CMD-SHELL" as a
+// candidate shell command.
+func readDockerHealthcheckTest(containerID string, dirs []string) []string {
+	for _, dir := range dirs {
+		data, err := os.ReadFile(fmt.Sprintf("%s/containers/%s/config.v2.json", dir, containerID))
 		if err != nil {
 			continue
 		}
 		var doc struct {
 			Config struct {
+				Env         []string `json:"Env"`
 				Healthcheck struct {
 					Test []string `json:"Test"`
 				} `json:"Healthcheck"`
@@ -469,9 +524,38 @@ func readDockerHealthcheckTest(containerID string) []string {
 		if err := json.Unmarshal(data, &doc); err != nil {
 			return nil
 		}
-		return doc.Config.Healthcheck.Test
+		test := doc.Config.Healthcheck.Test
+		if len(test) == 2 && test[0] == "CMD-SHELL" {
+			if expanded := expandShellVars(test[1], doc.Config.Env); expanded != test[1] {
+				test = append(test, expanded)
+			}
+		}
+		return test
 	}
 	return nil
+}
+
+// expandShellVars expands $VAR / ${VAR} / ${VAR:-default} references using the
+// container's Config.Env, mirroring what the healthcheck shell does before
+// exec. Unset variables expand to "" (shell behavior); anything fancier stays
+// unexpanded, which only means "no exemption" for that healthcheck.
+func expandShellVars(s string, env []string) string {
+	if !strings.ContainsRune(s, '$') || len(env) == 0 {
+		return s
+	}
+	vars := make(map[string]string, len(env))
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			vars[k] = v
+		}
+	}
+	return os.Expand(s, func(name string) string {
+		name, def, hasDef := strings.Cut(name, ":-")
+		if v, ok := vars[name]; ok && (v != "" || !hasDef) {
+			return v
+		}
+		return def
+	})
 }
 
 // MatchesHealthcheckCmd reports whether an exec'd command line is the
@@ -484,20 +568,24 @@ func MatchesHealthcheckCmd(cmdline string, test []string) bool {
 	}
 	switch test[0] {
 	case "CMD-SHELL":
-		shellCmd := strings.TrimSpace(test[1])
-		if shellCmd == "" {
-			return false
-		}
-		// The wrapper: "<shell> -c <shellCmd>".
-		if strings.Contains(cmdline, " -c ") && strings.HasSuffix(cmdline, shellCmd) {
-			return true
-		}
-		// A simple command run by the wrapper shell. Exact (normalized)
-		// equality, so a bare "wget" doesn't ride on a longer healthcheck.
+		// test[1] is the configured command; readDockerHealthcheckTest may
+		// append an env-expanded variant, so every element is a candidate.
 		norm := normalizeSimpleCmd(cmdline)
-		for _, simple := range splitShellCommands(shellCmd) {
-			if norm == normalizeSimpleCmd(simple) {
+		for _, shellCmd := range test[1:] {
+			shellCmd = strings.TrimSpace(shellCmd)
+			if shellCmd == "" {
+				continue
+			}
+			// The wrapper: "<shell> -c <shellCmd>".
+			if strings.Contains(cmdline, " -c ") && strings.HasSuffix(cmdline, shellCmd) {
 				return true
+			}
+			// A simple command run by the wrapper shell. Exact (normalized)
+			// equality, so a bare "wget" doesn't ride on a longer healthcheck.
+			for _, simple := range splitShellCommands(shellCmd) {
+				if norm == normalizeSimpleCmd(simple) {
+					return true
+				}
 			}
 		}
 		return false
@@ -528,19 +616,45 @@ func splitShellCommands(s string) []string {
 
 // normalizeSimpleCmd canonicalizes a simple command for comparison: the
 // binary token is reduced to its basename (the captured argv[0] may be "wget"
-// where the healthcheck says "/usr/bin/wget", or vice versa) and shell quotes
-// that the kernel-captured argv won't carry are stripped.
+// where the healthcheck says "/usr/bin/wget", or vice versa), shell quotes
+// that the kernel-captured argv won't carry are stripped, and redirections
+// (">/dev/null 2>&1" and friends) are dropped — the shell consumes those
+// before exec, so the captured argv of "wget -q URL >/dev/null 2>&1" is just
+// "wget -q URL".
 func normalizeSimpleCmd(s string) string {
 	fields := strings.Fields(s)
 	if len(fields) == 0 {
 		return ""
 	}
 	fields[0] = filepath.Base(fields[0])
-	for i, f := range fields {
-		fields[i] = strings.Trim(f, `"'`)
+	out := make([]string, 0, len(fields))
+	skipNext := false
+	for _, f := range fields {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if redirBare.MatchString(f) {
+			// Operator with the target as the next token (">", "2>", "<").
+			skipNext = true
+			continue
+		}
+		if redirAttached.MatchString(f) {
+			// Operator with attached target (">/dev/null", "2>&1", "<in").
+			continue
+		}
+		out = append(out, strings.Trim(f, `"'`))
 	}
-	return strings.Join(fields, " ")
+	return strings.Join(out, " ")
 }
+
+// Shell redirection tokens within a simple command. "Bare" is just the
+// operator (its target is the following token); "attached" carries the
+// target in the same token, including fd-duplication forms like 2>&1.
+var (
+	redirBare     = regexp.MustCompile(`^[0-9]*(>>?|<)$`)
+	redirAttached = regexp.MustCompile(`^[0-9]*(>>?|<)\S+$`)
+)
 
 // dockerListContainers / podmanListContainers / crictlListContainers return a
 // full-container-ID -> name map for all running containers under that runtime,
@@ -548,6 +662,14 @@ func normalizeSimpleCmd(s string) string {
 // fork). Each is called once per refresh, never per event.
 func dockerListContainers(ctx context.Context) map[string]string {
 	return parsePSList(runCLI(ctx, "docker", "ps", "--no-trunc", "--format", "{{.ID}} {{.Names}}"))
+}
+
+// dockerDataRootDir asks the docker daemon for its data-root (DockerRootDir),
+// e.g. "/var/lib/docker" or wherever data-root was moved to. "" when docker
+// isn't installed or the daemon is unreachable. Called once per inventory
+// refresh, never per event.
+func dockerDataRootDir(ctx context.Context) string {
+	return runCLI(ctx, "docker", "info", "--format", "{{.DockerRootDir}}")
 }
 
 func podmanListContainers(ctx context.Context) map[string]string {
@@ -647,11 +769,13 @@ func extractContainerID(path string) (string, string) {
 // Falls back to the hostname file if config.v2.json is not readable.
 func (e *EventEnricher) lookupDockerContainerName(containerID string) string {
 	// Docker stores container metadata in config.v2.json which includes the real
-	// container name (set via --name or auto-generated). We try two common root
-	// paths: the direct host path and the /proc/1/root path (for agents running
+	// container name (set via --name or auto-generated). Candidate roots come
+	// from containerDirs(): the daemon-reported data-root first, then the
+	// default /var/lib/docker (each also via /proc/1/root for agents running
 	// outside the Docker namespace).
-	for _, root := range []string{"", "/proc/1/root"} {
-		configPath := fmt.Sprintf("%s/var/lib/docker/containers/%s/config.v2.json", root, containerID)
+	dirs := e.containerDirs()
+	for _, dir := range dirs {
+		configPath := fmt.Sprintf("%s/containers/%s/config.v2.json", dir, containerID)
 		data, err := os.ReadFile(configPath)
 		if err != nil {
 			continue
@@ -664,8 +788,8 @@ func (e *EventEnricher) lookupDockerContainerName(containerID string) string {
 	}
 
 	// Fallback: read hostname file (often just short container ID, but better than empty)
-	for _, root := range []string{"", "/proc/1/root"} {
-		hostnamePath := fmt.Sprintf("%s/var/lib/docker/containers/%s/hostname", root, containerID)
+	for _, dir := range dirs {
+		hostnamePath := fmt.Sprintf("%s/containers/%s/hostname", dir, containerID)
 		data, err := os.ReadFile(hostnamePath)
 		if err != nil {
 			continue

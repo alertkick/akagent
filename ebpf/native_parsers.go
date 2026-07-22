@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -56,6 +57,22 @@ func (a *NativeEBPFAgent) parseExecveEvent(data []byte) (SecurityEvent, error) {
 	// args is the full argv space-joined by the BPF program, with a trailing
 	// separator after the last captured arg.
 	args := strings.TrimSpace(int8ArrayToString(bpfEvent.Args[:]))
+
+	// The in-kernel argv walk reads the caller's user memory at syscall entry
+	// and cannot fault pages in, so it intermittently stops short (often after
+	// argv[0]). When the process is still alive and its post-exec
+	// /proc/<pid>/cmdline extends what was captured at a token boundary,
+	// prefer the complete view. The prefix guard keeps a pid that has since
+	// exec'd something else (the sh -c wrapper after spawning its child) from
+	// donating the wrong argv.
+	if args != "" {
+		if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", bpfEvent.Pid)); err == nil {
+			procArgs := strings.TrimSpace(strings.ReplaceAll(string(data), "\x00", " "))
+			if len(procArgs) > len(args) && strings.HasPrefix(procArgs, args+" ") {
+				args = procArgs
+			}
+		}
+	}
 
 	procInfo := ProcessInfo{
 		PID:     int(bpfEvent.Pid),
