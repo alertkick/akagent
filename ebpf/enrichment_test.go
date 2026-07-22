@@ -73,11 +73,13 @@ func TestLookupDockerContainerName_TrimSlash(t *testing.T) {
 }
 
 // withoutRuntimeCLIs disables the real runtime listers so tests exercise only
-// the in-memory inventory, never a real `docker ps` on the test host.
+// the in-memory inventory, never a real `docker ps` or `docker info` on the
+// test host.
 func withoutRuntimeCLIs(e *EventEnricher) {
 	e.dockerList = func(context.Context) map[string]string { return nil }
 	e.podmanList = func(context.Context) map[string]string { return nil }
 	e.crictlList = func(context.Context) map[string]string { return nil }
+	e.dockerRootFn = nil
 }
 
 func TestRefreshInventory_ListsRunningContainers(t *testing.T) {
@@ -90,6 +92,7 @@ func TestRefreshInventory_ListsRunningContainers(t *testing.T) {
 	}
 	e.podmanList = func(context.Context) map[string]string { return nil }
 	e.crictlList = func(context.Context) map[string]string { return nil }
+	e.dockerRootFn = nil
 
 	e.RefreshInventory(context.Background())
 
@@ -128,6 +131,7 @@ func TestRefreshInventory_MergesRuntimes(t *testing.T) {
 	e.dockerList = func(context.Context) map[string]string { return map[string]string{dockerID: "from-docker"} }
 	e.podmanList = func(context.Context) map[string]string { return nil }
 	e.crictlList = func(context.Context) map[string]string { return map[string]string{crictlID: "from-crictl"} }
+	e.dockerRootFn = nil
 
 	e.RefreshInventory(context.Background())
 
@@ -179,6 +183,24 @@ func TestMatchesHealthcheckCmd(t *testing.T) {
 		{"NONE directive", "wget http://localhost/", []string{"NONE"}, false},
 		{"no healthcheck", "wget http://localhost/", nil, false},
 		{"empty cmdline", "", shellTest, false},
+		// readDockerHealthcheckTest appends the env-expanded command as an
+		// extra variant (cadvisor's test references $CADVISOR_HEALTHCHECK_URL).
+		{"env-expanded variant matches child", "wget --quiet --tries=1 --spider http://localhost:8080/healthz",
+			[]string{"CMD-SHELL",
+				"wget --quiet --tries=1 --spider $CADVISOR_HEALTHCHECK_URL || exit 1",
+				"wget --quiet --tries=1 --spider http://localhost:8080/healthz || exit 1"}, true},
+		{"raw variant still matches wrapper", "/bin/sh -c wget --quiet --tries=1 --spider $CADVISOR_HEALTHCHECK_URL || exit 1",
+			[]string{"CMD-SHELL",
+				"wget --quiet --tries=1 --spider $CADVISOR_HEALTHCHECK_URL || exit 1",
+				"wget --quiet --tries=1 --spider http://localhost:8080/healthz || exit 1"}, true},
+		// Redirections are consumed by the shell and never reach argv
+		// (alertkick-ui: "wget -q -O - URL >/dev/null 2>&1 || exit 1").
+		{"redirections stripped", "wget -q -O - http://127.0.0.1/livez",
+			[]string{"CMD-SHELL", "wget -q -O - http://127.0.0.1/livez >/dev/null 2>&1 || exit 1"}, true},
+		{"bare redirect operator with target token", "curl -f http://localhost/health",
+			[]string{"CMD-SHELL", "curl -f http://localhost/health > /dev/null"}, true},
+		{"redirect stripping keeps args distinct", "wget -q -O - http://127.0.0.1/admin",
+			[]string{"CMD-SHELL", "wget -q -O - http://127.0.0.1/livez >/dev/null 2>&1 || exit 1"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -299,5 +321,22 @@ func TestGetContainerImage_CachesAndPrunes(t *testing.T) {
 	e.getContainerImage(id)
 	if reads != 3 {
 		t.Fatalf("imageRead called %d times after eviction, want 3", reads)
+	}
+}
+
+func TestExpandShellVars(t *testing.T) {
+	env := []string{"CADVISOR_HEALTHCHECK_URL=http://localhost:8080/healthz", "EMPTY=", "PATH=/usr/bin"}
+	cases := []struct{ in, want string }{
+		{"wget --spider $CADVISOR_HEALTHCHECK_URL || exit 1", "wget --spider http://localhost:8080/healthz || exit 1"},
+		{"wget --spider ${CADVISOR_HEALTHCHECK_URL}", "wget --spider http://localhost:8080/healthz"},
+		{"curl ${MISSING:-http://localhost/}", "curl http://localhost/"},
+		{"curl ${EMPTY:-http://fallback/}", "curl http://fallback/"},
+		{"curl $MISSING", "curl "},
+		{"no dollars here", "no dollars here"},
+	}
+	for _, tc := range cases {
+		if got := expandShellVars(tc.in, env); got != tc.want {
+			t.Errorf("expandShellVars(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
