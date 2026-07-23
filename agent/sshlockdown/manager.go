@@ -113,14 +113,16 @@ type Options struct {
 	Logger Logger
 
 	// OnLockChange, if set, is called whenever the *planned* lock decision
-	// changes — i.e. the result of Evaluate(state, now), NOT the dead-man
-	// emergency override. It fires once on the first evaluation (so the
-	// consumer can seed its initial view) and again on every subsequent
-	// transition. locked=false means the host entered an unlock/maintenance
-	// window; locked=true means it (re-)locked. Used to drive FIM
-	// maintenance suppression and rescan-on-relock. Called synchronously
-	// from the ticker goroutine — keep it cheap or hand off to a goroutine.
-	OnLockChange func(locked bool)
+	// or the lock posture changes — i.e. the result of Evaluate(state, now),
+	// NOT the dead-man emergency override. It fires once on the first
+	// evaluation (so the consumer can seed its initial view) and again on
+	// every subsequent transition. lockEnabled carries the persistent
+	// posture: locked=false with lockEnabled=true means the host entered an
+	// unlock/maintenance window, whereas locked=false with lockEnabled=false
+	// is just the default-open posture — consumers like FIM maintenance
+	// suppression must distinguish the two. Called synchronously from the
+	// ticker goroutine — keep it cheap or hand off to a goroutine.
+	OnLockChange func(locked bool, lockEnabled bool)
 
 	// OnApplied, if set, is called after each blocker apply when the
 	// APPLIED state changes — unlike OnLockChange this reflects what the
@@ -316,10 +318,10 @@ func (m *Manager) Run(ctx context.Context) {
 		}
 	}()
 
-	// Track the previous planned-decision lock state so OnLockChange fires
-	// only on transitions. firstEval forces one call on startup to seed the
-	// consumer's view.
-	var lastLocked bool
+	// Track the previous planned-decision lock state (and posture) so
+	// OnLockChange fires only on transitions. firstEval forces one call on
+	// startup to seed the consumer's view.
+	var lastLocked, lastLockEnabled bool
 	firstEval := true
 
 	// Dead-man transitions are logged (not just applied) — a force-unlock
@@ -346,10 +348,11 @@ func (m *Manager) Run(ctx context.Context) {
 		// schedule / ad-hoc unlock, not an emergency unlock caused by losing
 		// the control-plane heartbeat — during a dead-man unlock we want FIM
 		// to keep watching, since that's exactly when a host is unreachable.
-		if m.opts.OnLockChange != nil && (firstEval || decision.Locked != lastLocked) {
-			m.opts.OnLockChange(decision.Locked)
+		if m.opts.OnLockChange != nil && (firstEval || decision.Locked != lastLocked || state.LockEnabled != lastLockEnabled) {
+			m.opts.OnLockChange(decision.Locked, state.LockEnabled)
 		}
 		lastLocked = decision.Locked
+		lastLockEnabled = state.LockEnabled
 		firstEval = false
 
 		// Dead-man override: if the threshold has elapsed without a
@@ -426,6 +429,7 @@ func (m *Manager) kick() {
 
 func cloneState(s State) State {
 	out := State{
+		LockEnabled:  s.LockEnabled,
 		ReleaseUntil: s.ReleaseUntil,
 		UpdatedAt:    s.UpdatedAt,
 		UpdatedBy:    s.UpdatedBy,

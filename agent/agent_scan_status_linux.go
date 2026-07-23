@@ -48,37 +48,45 @@ type securityScanStatusPayload struct {
 }
 
 // onLockStateChange returns the OnLockChange callback handed to the lockdown
-// manager. It drives the FIM/lock relationship: while the host is unlocked
-// (a maintenance window) FIM treats file changes as expected; when the host
-// re-locks it re-baselines so post-maintenance drift is measured from the new
-// known-good state. The first invocation only seeds suppression — it must not
-// trigger a rebaseline, because FIM already built its baseline at startup.
-func (a *agent) onLockStateChange() func(bool) {
+// manager. It drives the FIM/lock relationship: while the host is inside a
+// maintenance window (unlocked WITH the lock posture on) FIM treats file
+// changes as expected; when the window closes it re-baselines so
+// post-maintenance drift is measured from the new known-good state. A host
+// whose lock posture is off is just normally open — NOT in maintenance — so
+// FIM keeps alerting; otherwise the default-unlocked posture would silently
+// suppress FIM fleet-wide. The first invocation only seeds suppression — it
+// must not trigger a rebaseline, because FIM already built its baseline at
+// startup.
+func (a *agent) onLockStateChange() func(bool, bool) {
 	firstEval := true
-	return func(locked bool) {
+	prevMaintenance := false
+	return func(locked bool, lockEnabled bool) {
+		maintenance := !locked && lockEnabled
 		na := a.platformData.nativeAgent
 		if na != nil {
-			na.SetMaintenanceSuppression(!locked)
+			na.SetMaintenanceSuppression(maintenance)
 		}
 		switch {
 		case firstEval:
 			firstEval = false
-			a.log.Info().Bool("locked", locked).
+			a.log.Info().Bool("locked", locked).Bool("lock_enabled", lockEnabled).
 				Msg("agent.onLockStateChange - seeded FIM maintenance suppression")
-		case locked:
-			// Unlock/maintenance window just closed — accept current disk
-			// state as the new known-good baseline so post-maintenance drift
-			// is measured from here onward.
-			a.log.Info().Msg("agent.onLockStateChange - host re-locked, rebaselining FIM")
+		case prevMaintenance && !maintenance:
+			// Maintenance window just closed (re-lock, or posture turned
+			// off mid-window) — accept current disk state as the new
+			// known-good baseline so post-maintenance drift is measured
+			// from here onward.
+			a.log.Info().Msg("agent.onLockStateChange - maintenance window closed, rebaselining FIM")
 			if na != nil {
 				go na.FIMRebaseline()
 			}
 			a.platformData.scanStatusMu.Lock()
 			a.platformData.lastScanRescanAt = time.Now()
 			a.platformData.scanStatusMu.Unlock()
-		default:
-			a.log.Info().Msg("agent.onLockStateChange - host unlocked, FIM changes now treated as expected")
+		case maintenance:
+			a.log.Info().Msg("agent.onLockStateChange - maintenance window open, FIM changes now treated as expected")
 		}
+		prevMaintenance = maintenance
 		// Push fresh status so the UI reflects the transition promptly.
 		go func() {
 			if err := a.pushSecurityScanStatus(); err != nil {

@@ -20,7 +20,8 @@ func newFakeClock(t time.Time) *fakeClock {
 func (c *fakeClock) Now() time.Time { return c.now.Load().(time.Time) }
 func (c *fakeClock) Set(t time.Time) { c.now.Store(t) }
 
-func TestManager_InitialStateAppliesLock(t *testing.T) {
+func TestManager_InitialStateAppliesUnlock(t *testing.T) {
+	// Zero state = lock posture off = the first apply must be an Unlock.
 	b := &NoopBlocker{}
 	clk := newFakeClock(mustParse(t, time.RFC3339, "2026-05-29T14:00:00Z"))
 	m, err := NewManager(b, Options{
@@ -38,10 +39,37 @@ func TestManager_InitialStateAppliesLock(t *testing.T) {
 	defer func() { cancel(); <-done }()
 
 	// Wait for the first apply.
+	waitFor(t, func() bool { _, _, lc, uc := b.Snapshot(); return lc+uc >= 1 })
+	locked, _, _, _ := b.Snapshot()
+	if locked {
+		t.Fatalf("expected initial Unlock call (default posture is unlocked)")
+	}
+}
+
+func TestManager_LockEnabledStateAppliesLock(t *testing.T) {
+	b := &NoopBlocker{}
+	clk := newFakeClock(mustParse(t, time.RFC3339, "2026-05-29T14:00:00Z"))
+	m, err := NewManager(b, Options{
+		StatePath: filepath.Join(t.TempDir(), "lockdown.json"),
+		Now:       clk.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetState(State{LockEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { m.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
 	waitFor(t, func() bool { l, _, lc, _ := b.Snapshot(); return l && lc >= 1 })
 	locked, _, _, _ := b.Snapshot()
 	if !locked {
-		t.Fatalf("expected initial Lock call")
+		t.Fatalf("expected Lock call with lock posture enabled")
 	}
 }
 
@@ -53,6 +81,9 @@ func TestManager_UnlockAppliesAndRelocks(t *testing.T) {
 		Now:             clk.Now,
 		MinTickInterval: 1 * time.Second,
 	})
+	// Seed the locked posture — these tests exercise the timed
+	// unlock/re-lock machinery, which only runs while the lock is on.
+	_ = m.SetState(State{LockEnabled: true})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -84,12 +115,13 @@ func TestManager_OnLockChangeFiresOnTransitions(t *testing.T) {
 		StatePath:       filepath.Join(t.TempDir(), "lockdown.json"),
 		Now:             clk.Now,
 		MinTickInterval: 1 * time.Second,
-		OnLockChange: func(locked bool) {
+		OnLockChange: func(locked bool, _ bool) {
 			mu.Lock()
 			transitions = append(transitions, locked)
 			mu.Unlock()
 		},
 	})
+	_ = m.SetState(State{LockEnabled: true})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -154,6 +186,7 @@ func TestManager_LockNowOverridesUnlock(t *testing.T) {
 		StatePath: filepath.Join(t.TempDir(), "lockdown.json"),
 		Now:       clk.Now,
 	})
+	_ = m.SetState(State{LockEnabled: true})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
@@ -176,6 +209,7 @@ func TestManager_DeadManSwitchUnlocksAfterHeartbeatLoss(t *testing.T) {
 		MinTickInterval:  1 * time.Second,
 		DeadManThreshold: 5 * time.Minute,
 	})
+	_ = m.SetState(State{LockEnabled: true})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
@@ -198,6 +232,7 @@ func TestManager_HeartbeatPreventsDeadMan(t *testing.T) {
 		MinTickInterval:  1 * time.Second,
 		DeadManThreshold: 5 * time.Minute,
 	})
+	_ = m.SetState(State{LockEnabled: true})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
@@ -236,6 +271,7 @@ func TestManager_OnAppliedReportsDeadManCycle(t *testing.T) {
 			mu.Unlock()
 		},
 	})
+	_ = m.SetState(State{LockEnabled: true})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
@@ -275,9 +311,10 @@ func TestManager_PersistsAcrossRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lockdown.json")
 	clk := newFakeClock(mustParse(t, time.RFC3339, "2026-05-29T14:00:00Z"))
 
-	// First manager: unlock for 30 min, then "die".
+	// First manager: lock posture on, unlock for 30 min, then "die".
 	{
 		m, _ := NewManager(&NoopBlocker{}, Options{StatePath: path, Now: clk.Now})
+		_ = m.SetState(State{LockEnabled: true})
 		if _, err := m.Unlock(30*time.Minute, "ssidhu"); err != nil {
 			t.Fatal(err)
 		}
