@@ -3,12 +3,15 @@
 //
 // Design (see fleet/docs/features/ssh-lockdown.md):
 //
-//   - Default state of a host is LOCKED — inbound sshd accept() returns
-//     -EPERM from the LSM hook (or TC drop on older kernels).
-//   - An "unlock" is a timestamp: lockdown.release_until. When now >=
-//     release_until the host is locked again; otherwise unlocked. There is
-//     no separate "is_unlocked" boolean — the timestamp IS the truth, so
-//     the LSM hot path can decide with one read of one BPF map cell.
+//   - Default posture of a host is UNLOCKED. Locking is opt-in: the
+//     operator toggles lock_enabled=true, and only then does enforcement
+//     apply — inbound sshd accept() returns -EPERM from the LSM hook (or
+//     TC drop on older kernels) outside an active unlock.
+//   - While locked, an "unlock" is a timestamp: lockdown.release_until.
+//     When now >= release_until the host is locked again; otherwise
+//     unlocked. There is no separate "is_unlocked" boolean for the timed
+//     path — the timestamp IS the truth, so the LSM hot path can decide
+//     with one read of one BPF map cell.
 //   - Unlocks come from two sources:
 //        1. Ad-hoc UI button → API writes release_until = now + duration.
 //        2. Scheduled maintenance windows → the agent computes the next
@@ -32,12 +35,20 @@ import (
 //   - the alertkick-api security_settings.ssh_lockdown subdocument
 //   - the control-plane PUT payload from the UI
 //
-// A zero-value State means "locked, no unlock window scheduled, no
-// allowlist" — the safest possible default.
+// A zero-value State means "unlocked, lock posture off" — SSH is open
+// until an operator explicitly enables the lock. (Before v2.1 the zero
+// value meant locked; the posture flip was a deliberate product change —
+// see the API's SSHLockdown model doc.)
 type State struct {
+	// LockEnabled is the persistent lock posture. False (the default) =
+	// SSH is always allowed and the fields below are dormant. True = the
+	// host is locked outside an active ad-hoc unlock or scheduled window.
+	LockEnabled bool `json:"lock_enabled,omitempty"`
+
 	// ReleaseUntil is the wall-clock instant after which SSH is allowed.
-	// Zero = locked. Compared against time.Now(), not monotonic time —
-	// the agent and the LSM map both need the same answer after a reboot.
+	// Zero = locked (while LockEnabled). Compared against time.Now(), not
+	// monotonic time — the agent and the LSM map both need the same
+	// answer after a reboot.
 	ReleaseUntil time.Time `json:"release_until,omitempty"`
 
 	// AllowedSourceIPs is the permanent bastion allowlist. Entries in
@@ -187,6 +198,7 @@ func (w ScheduleWindow) validate() error {
 // command-pushed update. Pure function — no I/O, no clock side effects.
 //
 // Precedence:
+//  0. Lock posture off (the default) → unlocked, nothing else considered.
 //  1. An ad-hoc unlock (state.ReleaseUntil) that hasn't expired wins.
 //     If the operator clicks "Unlock 30 min" at 14:00, the host stays
 //     unlocked until 14:30 regardless of what the schedule says.
@@ -195,6 +207,13 @@ func (w ScheduleWindow) validate() error {
 //  3. Otherwise locked. NextChangeAt points at the soonest of (unlock
 //     expiry, next window start, current window end).
 func Evaluate(state State, now time.Time) Decision {
+	// 0. Lock posture off → permanently unlocked. Zero ReleaseUntil makes
+	// the blocker use its far-future sentinel; zero NextChangeAt lets the
+	// ticker idle at MinTickInterval.
+	if !state.LockEnabled {
+		return Decision{Locked: false, ReleaseUntil: time.Time{}, NextChangeAt: time.Time{}}
+	}
+
 	// 1. Ad-hoc unlock active?
 	if !state.ReleaseUntil.IsZero() && state.ReleaseUntil.After(now) {
 		next := state.ReleaseUntil

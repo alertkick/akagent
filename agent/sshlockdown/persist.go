@@ -11,8 +11,10 @@ import (
 // restarts. Survives crashes; on startup the manager reloads from this
 // file before contacting the control plane. Path is fixed (not config)
 // because if you change it, an old agent build leaves a state file
-// behind and the new one boots in default-locked, wedging SSH access on
-// hosts that were intentionally unlocked.
+// behind and the new one boots with a fresh default posture, silently
+// discarding a lock an operator intentionally enabled. (A pre-posture
+// state file has no lock_enabled field, so upgraded agents boot unlocked
+// — the intended default — until the API pushes the stored posture.)
 const DefaultStatePath = "/var/lib/akagent/lockdown.json"
 
 // LoadState reads a persisted State from path. Returns (zero State, nil)

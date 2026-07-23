@@ -15,11 +15,27 @@ func mustParse(t *testing.T, layout, value string) time.Time {
 	return ts
 }
 
-func TestEvaluate_DefaultLocked(t *testing.T) {
+func TestEvaluate_DefaultUnlocked(t *testing.T) {
+	// Default posture is unlocked — a zero-value State (fresh host, or
+	// pre-posture lockdown.json) allows SSH until the lock is enabled.
 	now := mustParse(t, time.RFC3339, "2026-05-29T14:00:00Z")
 	d := Evaluate(State{}, now)
+	if d.Locked {
+		t.Fatal("zero-state should be unlocked (lock posture off by default)")
+	}
+	if !d.ReleaseUntil.IsZero() {
+		t.Fatalf("ReleaseUntil should be zero with posture off, got %v", d.ReleaseUntil)
+	}
+	if !d.NextChangeAt.IsZero() {
+		t.Fatalf("NextChangeAt should be zero with posture off, got %v", d.NextChangeAt)
+	}
+}
+
+func TestEvaluate_LockEnabledDefaultLocked(t *testing.T) {
+	now := mustParse(t, time.RFC3339, "2026-05-29T14:00:00Z")
+	d := Evaluate(State{LockEnabled: true}, now)
 	if !d.Locked {
-		t.Fatal("zero-state should be locked")
+		t.Fatal("lock-enabled state with no unlock should be locked")
 	}
 	if !d.ReleaseUntil.IsZero() {
 		t.Fatalf("ReleaseUntil should be zero when locked, got %v", d.ReleaseUntil)
@@ -29,10 +45,27 @@ func TestEvaluate_DefaultLocked(t *testing.T) {
 	}
 }
 
+func TestEvaluate_PostureOffIgnoresSchedule(t *testing.T) {
+	// A leftover schedule from a previously-locked posture must not lock
+	// the host while the posture is off — not even outside the window.
+	now := mustParse(t, time.RFC3339, "2026-05-29T14:00:00Z") // Friday afternoon
+	state := State{
+		Schedule: []ScheduleWindow{{
+			DaysOfWeek: []int{int(time.Friday)},
+			StartTime:  "02:00",
+			EndTime:    "03:00",
+		}},
+	}
+	d := Evaluate(state, now)
+	if d.Locked {
+		t.Fatal("expected unlocked while lock posture is off")
+	}
+}
+
 func TestEvaluate_AdHocUnlockActive(t *testing.T) {
 	now := mustParse(t, time.RFC3339, "2026-05-29T14:00:00Z")
 	release := now.Add(30 * time.Minute)
-	d := Evaluate(State{ReleaseUntil: release}, now)
+	d := Evaluate(State{LockEnabled: true, ReleaseUntil: release}, now)
 	if d.Locked {
 		t.Fatal("expected unlocked while inside ReleaseUntil window")
 	}
@@ -46,7 +79,7 @@ func TestEvaluate_AdHocUnlockActive(t *testing.T) {
 
 func TestEvaluate_ExpiredUnlockRelocks(t *testing.T) {
 	now := mustParse(t, time.RFC3339, "2026-05-29T14:00:00Z")
-	d := Evaluate(State{ReleaseUntil: now.Add(-1 * time.Minute)}, now)
+	d := Evaluate(State{LockEnabled: true, ReleaseUntil: now.Add(-1 * time.Minute)}, now)
 	if !d.Locked {
 		t.Fatal("expected locked once ReleaseUntil is in the past")
 	}
@@ -56,6 +89,7 @@ func TestEvaluate_ScheduledWindowActive(t *testing.T) {
 	// Friday 02:30 UTC — inside a Friday 02:00-03:00 UTC window.
 	now := mustParse(t, time.RFC3339, "2026-05-29T02:30:00Z")
 	state := State{
+		LockEnabled: true,
 		Schedule: []ScheduleWindow{{
 			DaysOfWeek: []int{int(time.Friday)},
 			StartTime:  "02:00",
@@ -77,6 +111,7 @@ func TestEvaluate_ScheduledWindowInactive_NextStart(t *testing.T) {
 	// Friday 01:30 UTC — 30 minutes before a 02:00-03:00 Friday window.
 	now := mustParse(t, time.RFC3339, "2026-05-29T01:30:00Z")
 	state := State{
+		LockEnabled: true,
 		Schedule: []ScheduleWindow{{
 			DaysOfWeek: []int{int(time.Friday)},
 			StartTime:  "02:00",
@@ -99,6 +134,7 @@ func TestEvaluate_AdHocBeatsSchedule(t *testing.T) {
 	// until 04:00 — not the earlier of the two.
 	now := mustParse(t, time.RFC3339, "2026-05-29T02:30:00Z")
 	state := State{
+		LockEnabled:  true,
 		ReleaseUntil: mustParse(t, time.RFC3339, "2026-05-29T04:00:00Z"),
 		Schedule: []ScheduleWindow{{
 			DaysOfWeek: []int{int(time.Friday)},
@@ -121,6 +157,7 @@ func TestEvaluate_CrossMidnightWindow(t *testing.T) {
 	// The Friday instance hasn't ended yet; host should be unlocked.
 	now := mustParse(t, time.RFC3339, "2026-05-30T01:30:00Z")
 	state := State{
+		LockEnabled: true,
 		Schedule: []ScheduleWindow{{
 			DaysOfWeek: []int{int(time.Friday)},
 			StartTime:  "22:00",
@@ -143,6 +180,7 @@ func TestEvaluate_TimezoneAffectsWindow(t *testing.T) {
 	// inside the NY-local Friday morning maintenance slot.
 	now := mustParse(t, time.RFC3339, "2026-05-29T06:30:00Z")
 	state := State{
+		LockEnabled: true,
 		Schedule: []ScheduleWindow{{
 			DaysOfWeek: []int{int(time.Friday)},
 			StartTime:  "02:00",
@@ -161,6 +199,7 @@ func TestEvaluate_DaysOfWeekRespected(t *testing.T) {
 	// should be locked even though the time matches.
 	now := mustParse(t, time.RFC3339, "2026-05-29T02:30:00Z") // Friday
 	state := State{
+		LockEnabled: true,
 		Schedule: []ScheduleWindow{{
 			DaysOfWeek: []int{int(time.Monday), int(time.Tuesday), int(time.Wednesday)},
 			StartTime:  "02:00",
@@ -177,6 +216,7 @@ func TestEvaluate_EmptyDaysOfWeekMeansDaily(t *testing.T) {
 	// No DaysOfWeek specified → window applies every day.
 	now := mustParse(t, time.RFC3339, "2026-05-29T02:30:00Z") // Friday
 	state := State{
+		LockEnabled: true,
 		Schedule: []ScheduleWindow{{
 			StartTime: "02:00",
 			EndTime:   "03:00",
