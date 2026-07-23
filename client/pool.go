@@ -63,7 +63,12 @@ func NewPool(conf *config.Config, log zerolog.Logger, version string) *Pool {
 	p := &Pool{
 		log:           log.With().Str("component", "pool").Logger(),
 		requestSource: make(map[string]*Connection),
-		ServerReqChan: make(chan Request),
+		// Buffered so a momentarily-busy request consumer doesn't block fanIn,
+		// which would back up each connection's ServerReqChan and cause inbound
+		// commands to be dropped. The consumer also dispatches each command
+		// asynchronously (see StartWatchingServerRequests), so this only has to
+		// absorb bursts, not sustained handler latency.
+		ServerReqChan: make(chan Request, serverReqChanBuffer),
 	}
 
 	for _, ep := range endpoints {

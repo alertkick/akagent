@@ -165,10 +165,18 @@ func (a *agent) StartWatchingServerRequests(requestWatcherShutdown chan struct{}
 			a.log.Debug().Msg("agent.StartWatchingServerRequests - stopping")
 			return
 		case req := <-a.conn.ServerReqChan:
-			err := a.HandleServerRequest(req)
-			if err != nil {
-				a.log.Err(err).Msg("agent.StartWatchingServerRequests - error handling message")
-			}
+			// Dispatch each command in its own goroutine. Running HandleServerRequest
+			// inline here means one slow/wedged handler (a config apply, or any disk
+			// I/O under iowait) pins this loop, which stops draining the connection
+			// buffer and causes later commands — including an SSH unlock — to be
+			// silently dropped while heartbeats stay alive. Handlers send their own
+			// ID-correlated responses, so async dispatch is safe.
+			reqCopy := req
+			a.goHandle("server-request:"+reqCopy.Method, reqCopy, func(r client.Request) {
+				if err := a.HandleServerRequest(r); err != nil {
+					a.log.Err(err).Msg("agent.StartWatchingServerRequests - error handling message")
+				}
+			})
 		}
 	}
 }
