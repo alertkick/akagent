@@ -123,12 +123,14 @@ func (m *Monitor) Start() string {
 			m.inode = inodeOf(fi)
 		}
 		go m.loop()
+		go m.gcLoop()
 		return "file:" + m.path
 	}
 	// No auth-log file: fall back to the systemd journal where available.
 	// startJournalSource is a no-op stub on non-Linux and returns false when
 	// journalctl is absent, so Start reports "" (detection disabled).
 	if !m.cfg.DisableJournal && m.startJournalSource() {
+		go m.gcLoop()
 		return "journal"
 	}
 	return ""
@@ -136,6 +138,69 @@ func (m *Monitor) Start() string {
 
 // Stop ends the poll loop.
 func (m *Monitor) Stop() { close(m.stop) }
+
+// gcLoop periodically drops per-source map entries that have aged out. Without
+// it the failures/lastAlert/users maps grow one permanent entry per distinct
+// source IP (or sudo user): an SSH brute-force flood — routine on any
+// internet-facing host, thousands of distinct source IPs a day — would leak
+// unbounded memory. processLine can't self-clean because a source that never
+// reappears never gets re-pruned. Runs for both the file and journal sources.
+func (m *Monitor) gcLoop() {
+	interval := time.Duration(m.cfg.WindowSeconds) * time.Second
+	if interval < time.Minute {
+		interval = time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.stop:
+			return
+		case <-ticker.C:
+			m.gcStale(time.Now().Unix())
+		}
+	}
+}
+
+// gcStale removes map entries that no longer matter: failure windows with no
+// in-window timestamps, lastAlert entries past the cooldown, and users entries
+// no longer backed by either. Keeps all three maps bounded to the currently
+// active set of sources.
+func (m *Monitor) gcStale(now int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cutoff := now - int64(m.cfg.WindowSeconds)
+	coolCutoff := now - int64(m.cfg.CooldownSeconds)
+
+	for key, times := range m.failures {
+		kept := times[:0]
+		for _, t := range times {
+			if t >= cutoff {
+				kept = append(kept, t)
+			}
+		}
+		if len(kept) == 0 {
+			delete(m.failures, key)
+		} else {
+			m.failures[key] = kept
+		}
+	}
+	for key, last := range m.lastAlert {
+		if last < coolCutoff {
+			delete(m.lastAlert, key)
+		}
+	}
+	for key := range m.users {
+		if _, ok := m.failures[key]; ok {
+			continue
+		}
+		if _, ok := m.lastAlert[key]; ok {
+			continue
+		}
+		delete(m.users, key)
+	}
+}
 
 func (m *Monitor) loop() {
 	ticker := time.NewTicker(time.Duration(m.cfg.PollSeconds) * time.Second)

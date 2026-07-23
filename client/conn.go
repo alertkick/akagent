@@ -74,6 +74,8 @@ type Connection struct {
 	responseChan       chan Response
 	requests           map[string]chan Response // Map of request IDs to response channels
 	requestLock        sync.Mutex               // Mutex for concurrent access to requests map
+	reqChanMu          sync.Mutex               // Guards ServerReqChan send vs close (prevents send-on-closed panic)
+	reqChanClosed      bool                     // True once ServerReqChan has been closed by Close()
 	wg                 sync.WaitGroup           // WaitGroup for graceful shutdown
 	nextRequestID      int                      // Counter for generating unique request IDs
 	timeout            int                      // Timeout for requests in seconds. Default is 30 seconds
@@ -87,7 +89,15 @@ func (c *Connection) Close() error {
 		c.log.Debug().Msg("Connection.Close - closing connection, state = StateShuttingDown")
 	}
 	c.state = StateShuttingDown
-	close(c.ServerReqChan) // close this channel otherwise agent watcher loop keeps waiting.
+	// Close under reqChanMu and flag it, so a concurrent request-forward in
+	// processMessageBytes can't send on the closed channel and panic. (fanIn
+	// ranges over this channel, so closing it ends that goroutine.)
+	c.reqChanMu.Lock()
+	if !c.reqChanClosed {
+		c.reqChanClosed = true
+		close(c.ServerReqChan)
+	}
+	c.reqChanMu.Unlock()
 	if c.conn != nil {
 		return c.conn.Close()
 	} else {
@@ -346,6 +356,24 @@ func (c *Connection) SendJSONMessage(req *Request) (string, chan Response, error
 		return "0", nil, err
 	}
 
+	// Reap the request entry if no response arrives within the timeout. A
+	// matching response deletes it early (readMessages), making this a no-op;
+	// but fire-and-forget sends (e.g. the 5-minute lockdown mechanism report)
+	// and responses the endpoint never returns would otherwise leave the
+	// requests map growing without bound (IDs are a monotonic counter, so keys
+	// never coalesce). Delete-only — closing responseCh could hand a still
+	// waiting caller a zero-valued Response that looks like a real reply, so we
+	// leave the buffered channel to be GC'd once the caller's own timeout fires.
+	reapAfter := c.timeout
+	if reapAfter <= 0 {
+		reapAfter = 30
+	}
+	time.AfterFunc(time.Duration(reapAfter)*time.Second, func() {
+		c.requestLock.Lock()
+		delete(c.requests, requestID)
+		c.requestLock.Unlock()
+	})
+
 	return requestID, responseCh, nil
 
 }
@@ -544,14 +572,21 @@ func (c *Connection) processMessageBytes(data []byte) error {
 		// get the connection torn down. The buffer absorbs normal bursts; if
 		// it is somehow full we drop the request (it will time out and can be
 		// retried) rather than stall the read path and kill the connection.
-		select {
-		case c.ServerReqChan <- req:
-		default:
-			c.log.Warn().
-				Str("id", req.ID).
-				Str("method", req.Method).
-				Msg("Connection.processMessageBytes - ServerReqChan full, dropping request to keep the connection responsive")
+		// Under reqChanMu so we never send on a channel Close() just closed.
+		// The send stays non-blocking (select/default) so the read loop is
+		// never stalled by a slow consumer.
+		c.reqChanMu.Lock()
+		if !c.reqChanClosed {
+			select {
+			case c.ServerReqChan <- req:
+			default:
+				c.log.Warn().
+					Str("id", req.ID).
+					Str("method", req.Method).
+					Msg("Connection.processMessageBytes - ServerReqChan full, dropping request to keep the connection responsive")
+			}
 		}
+		c.reqChanMu.Unlock()
 	}
 
 	return nil

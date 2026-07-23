@@ -64,6 +64,14 @@ func (d *EventDeduplicator) Add(event ebpf.SecurityEvent) {
 	}
 }
 
+// Len reports how many distinct event groups the current window holds. Used to
+// force a flush before the window can grow unbounded under a storm of
+// high-cardinality low-priority events (each distinct key retains a full
+// SecurityEvent copy for up to the 30s batch interval otherwise).
+func (d *EventDeduplicator) Len() int {
+	return len(d.currentWindow)
+}
+
 // Flush returns deduplicated events and resets the current window.
 // Events with count > 1 have their aggregation fields populated.
 func (d *EventDeduplicator) Flush() []ebpf.SecurityEvent {
@@ -107,6 +115,12 @@ const (
 	MaxBatchSize = 500
 	// HighPriorityFlushThreshold - flush immediately if this many high priority events
 	HighPriorityFlushThreshold = 5
+	// MaxDedupWindow caps how many distinct low-priority event groups the
+	// deduplicator holds before we force a flush. Without it, a storm of
+	// high-cardinality low-priority events (fileops across many paths, network
+	// events to many peers) accumulates full event structs for the whole 30s
+	// batch interval and can OOM a small host.
+	MaxDedupWindow = 2000
 	// sendQueueDepth is how many ready batches can be buffered toward the
 	// async sender. It absorbs brief endpoint slowness/disconnects without
 	// blocking the drain loop; once full, batches are dropped (and counted)
@@ -232,7 +246,8 @@ func (a *agent) StartEBPFEventSender(shutdown chan struct{}, wg *sync.WaitGroup)
 			// Force flush conditions:
 			// 1. Batch is full
 			// 2. Too many high priority events (security-critical)
-			if len(eventBatch) >= MaxBatchSize || highPriorityCount >= HighPriorityFlushThreshold {
+			// 3. Dedup window is full (bounds memory under a low-priority storm)
+			if len(eventBatch) >= MaxBatchSize || highPriorityCount >= HighPriorityFlushThreshold || dedup.Len() >= MaxDedupWindow {
 				flush("force flush")
 			}
 		}
