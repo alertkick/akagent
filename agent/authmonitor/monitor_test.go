@@ -82,3 +82,37 @@ func TestIgnoresBenignLines(t *testing.T) {
 		t.Fatalf("benign lines should not trigger, got %d", len(findings))
 	}
 }
+
+func TestGCStaleBoundsMaps(t *testing.T) {
+	m := New(Config{Threshold: 3, WindowSeconds: 60, CooldownSeconds: 100}, func(Finding) {})
+	// Simulate a brute-force flood from many distinct source IPs, each seen
+	// once and never again (the leak scenario).
+	base := int64(1000)
+	for i := 0; i < 500; i++ {
+		line := "May 30 10:00:00 host sshd[123]: Failed password for root from 10.0." + itoa(i/256) + "." + itoa(i%256) + " port 22 ssh2"
+		m.processLine(line, base)
+	}
+	if len(m.failures) == 0 {
+		t.Fatal("expected failure entries after flood")
+	}
+	// Advance well past window + cooldown and GC.
+	m.gcStale(base + 1000)
+	if len(m.failures) != 0 || len(m.users) != 0 || len(m.lastAlert) != 0 {
+		t.Fatalf("gcStale left entries: failures=%d users=%d lastAlert=%d",
+			len(m.failures), len(m.users), len(m.lastAlert))
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [3]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
+}

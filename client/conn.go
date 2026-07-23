@@ -346,6 +346,24 @@ func (c *Connection) SendJSONMessage(req *Request) (string, chan Response, error
 		return "0", nil, err
 	}
 
+	// Reap the request entry if no response arrives within the timeout. A
+	// matching response deletes it early (readMessages), making this a no-op;
+	// but fire-and-forget sends (e.g. the 5-minute lockdown mechanism report)
+	// and responses the endpoint never returns would otherwise leave the
+	// requests map growing without bound (IDs are a monotonic counter, so keys
+	// never coalesce). Delete-only — closing responseCh could hand a still
+	// waiting caller a zero-valued Response that looks like a real reply, so we
+	// leave the buffered channel to be GC'd once the caller's own timeout fires.
+	reapAfter := c.timeout
+	if reapAfter <= 0 {
+		reapAfter = 30
+	}
+	time.AfterFunc(time.Duration(reapAfter)*time.Second, func() {
+		c.requestLock.Lock()
+		delete(c.requests, requestID)
+		c.requestLock.Unlock()
+	})
+
 	return requestID, responseCh, nil
 
 }

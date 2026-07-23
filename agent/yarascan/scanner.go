@@ -36,6 +36,11 @@ type Config struct {
 	QueueSize int    // pending-scan buffer (default 256)
 }
 
+// maxSeenEntries bounds the scan-dedupe map (path -> mtime). Generous enough
+// that a normal host's working set of distinct executed files never hits it;
+// on a pathological host it clears periodically rather than leaking.
+const maxSeenEntries = 10000
+
 // Match is a YARA hit on a file.
 type Match struct {
 	Path  string
@@ -166,6 +171,13 @@ func (s *Scanner) scanOne(path string) {
 	if s.seen[path] == mtime {
 		s.mu.Unlock()
 		return // same content already scanned
+	}
+	if len(s.seen) >= maxSeenEntries {
+		// Bound memory: yaraScan runs on every execve and FIM change, so a host
+		// that runs many distinct binaries/scripts (CI, containers, random
+		// /tmp names) would grow this map without limit. Clearing only drops
+		// de-dupe history, which costs at most a re-scan — safe.
+		s.seen = make(map[string]int64)
 	}
 	s.seen[path] = mtime
 	s.mu.Unlock()
